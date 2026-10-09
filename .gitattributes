@@ -1,0 +1,35 @@
+# ============================================================
+#  换行符与二进制策略
+#
+#  为什么需要它：Windows 批处理对换行符敏感，.bat 若是 LF 结尾，
+#  cmd 解析 goto / label 会失败（表现为「脚本跑一半就没了」）。
+#  这里把策略固化，避免不同机器 core.autocrlf 设置不一致导致的行为漂移。
+# ============================================================
+
+# 默认：按内容自动判定文本/二进制，文本统一以 LF 入库
+* text=auto
+
+# ---------- 必须是 CRLF ----------
+# 仓库内仍存 LF，检出到工作区时为 CRLF
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+
+# ---------- 统一 LF ----------
+*.py    text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+*.json  text eol=lf
+*.css   text eol=lf
+*.js    text eol=lf
+*.html  text eol=lf
+
+# ---------- 二进制：禁止任何转换与 diff ----------
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.ico   binary
+*.onnx  binary
+*.exe   binary
+*.dll   binary
+*.7z    binary
+*.zip   binary
