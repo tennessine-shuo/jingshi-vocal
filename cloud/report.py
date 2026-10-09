@@ -46,7 +46,8 @@ _BUNDLED_PDF_GEN = (Path(__file__).resolve().parent.parent
 _PDF_GENERATOR = os.getenv(
     "TEACHING_EVAL_PDF_GEN",
     str(_BUNDLED_PDF_GEN) if _BUNDLED_PDF_GEN.exists()
-    else r"C:\Users\汤朔\.workbuddy\skills\teaching-eval\assets\generate_pdf.py")
+    else str(Path.home() / ".workbuddy" / "skills" / "teaching-eval"
+             / "assets" / "generate_pdf.py"))
 
 
 # ---------------------------------------------------------------- LLM 通道

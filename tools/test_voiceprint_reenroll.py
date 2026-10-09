@@ -84,16 +84,16 @@ def test_enroll_semantics(tmp: Path) -> None:
     b = make_wav(tmp / "b.wav")
     db = stub_db(tmp, {"a.wav": [1, 0, 0, 0], "b.wav": [0, 1, 0, 0]})
 
-    r1 = db.enroll("T001", "汤朔", "teacher", [str(a)])
+    r1 = db.enroll("T001", "教师", "teacher", [str(a)])
     check(r1["added"] == 1 and r1["total_embeddings"] == 1,
           "首次注册计入 1 段", str(r1))
     check(r1["replaced"] is False, "首次注册不算替换")
 
-    r2 = db.enroll("T001", "汤朔", "teacher", [str(b)])
+    r2 = db.enroll("T001", "教师", "teacher", [str(b)])
     check(r2["total_embeddings"] == 2 and r2["replaced"] is False,
           "默认是追加（2 段）", str(r2))
 
-    r3 = db.enroll("T001", "汤朔", "teacher", [str(b)], replace=True)
+    r3 = db.enroll("T001", "教师", "teacher", [str(b)], replace=True)
     check(r3["replaced"] is True and r3["dropped"] == 2,
           "替换语义上报弃用 2 段", str(r3))
     check(r3["total_embeddings"] == 1,
@@ -102,7 +102,7 @@ def test_enroll_semantics(tmp: Path) -> None:
           "留下的是新样本向量（[0,1,0,0]）",
           str(db.persons["T001"]["embeddings"][0]))
 
-    r4 = db.enroll("S002", "Lucas", "student", [str(a)], replace=True)
+    r4 = db.enroll("S002", "学生乙", "student", [str(a)], replace=True)
     check(r4["replaced"] is False,
           "对不存在的人用 replace 不应误报替换", str(r4))
 
@@ -113,9 +113,9 @@ def test_backup(tmp: Path) -> None:
     print("\n=== ② 破坏性操作前备份 ===")
     a = make_wav(tmp / "a.wav")
     db = stub_db(tmp, {"a.wav": [1, 0, 0, 0]})
-    db.enroll("T001", "汤朔", "teacher", [str(a)])
+    db.enroll("T001", "教师", "teacher", [str(a)])
 
-    r = db.enroll("T001", "汤朔", "teacher", [str(a)], replace=True)
+    r = db.enroll("T001", "教师", "teacher", [str(a)], replace=True)
     bak = Path(r["backup"]) if r["backup"] else None
     check(bool(bak) and bak.exists(), "替换时生成了整库快照", str(bak))
     if bak and bak.exists():
@@ -131,7 +131,7 @@ def test_backup(tmp: Path) -> None:
     check(after == before + 1, "remove 也会先拍快照", f"{before} → {after}")
 
     db2 = stub_db(tmp / "fresh", {"a.wav": [1, 0, 0, 0]})
-    r2 = db2.enroll("S001", "袁楚然", "student", [str(a)], replace=True)
+    r2 = db2.enroll("S001", "学生甲", "student", [str(a)], replace=True)
     check(r2["backup"] == "" and not (tmp / "fresh" / "voiceprint_local_backup").exists(),
           "对新人 replace 不产生多余快照（库文件都还没存在）")
 

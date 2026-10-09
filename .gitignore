@@ -16,6 +16,12 @@ recorder/config.json
 SecretKey.csv
 
 # ---------- 2. 生物特征与个人数据 ----------
+# 本机课程目录映射：值里含真实学生姓名的目录名（tools/_course.py 读它）
+tools/courses.local.json
+
+# 一次性脱敏脚本：锚点里含脱敏前的真实姓名与本机路径，仅供本机执行
+_installer/sanitize_stage*.py
+
 cloud/voiceprint_local_db.json
 cloud/voiceprint_registry.json
 cloud/voiceprint_local_backup/

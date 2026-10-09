@@ -18,9 +18,9 @@
 
 用法：
   # 注册（可多次调用，同一 person_id 会追加样本）
-  python voiceprint_local.py enroll --wav a.wav b.wav --person-id T001 --name 汤朔 --role teacher
+  python voiceprint_local.py enroll --wav a.wav b.wav --person-id T001 --name 张三 --role teacher
   # 重新录制：丢掉该人旧样本只留新的（先自动备份整库）
-  python voiceprint_local.py enroll --wav new.wav --person-id T001 --name 汤朔 --replace
+  python voiceprint_local.py enroll --wav new.wav --person-id T001 --name 张三 --replace
   python voiceprint_local.py list
   python voiceprint_local.py remove --person-id T001
   python voiceprint_local.py verify --wav probe.wav --topk 3
@@ -388,7 +388,7 @@ def _cmd_selftest(a) -> int:
     db = LocalVoiceprint(a.model, a.db)
     print("=== 1) 用注册样本建库 ===")
     for w in sorted(samples.glob("*.wav")):
-        stem = w.stem                      # 形如 S002_Lucas Zhang
+        stem = w.stem                      # 形如 S002_StudentName
         pid, _, name = stem.partition("_")
         r = db.enroll(pid, name, "student", [str(w)])
         print(f"  {pid:6s} {name:14s} +{r['added']} 段")
@@ -404,11 +404,20 @@ def _cmd_selftest(a) -> int:
               " | ".join(f"{t['person_name']}={t['cosine']:.3f}" for t in tops))
 
     print("\n=== 3) 课堂片段验证（腾讯云已确认身份，用于交叉校验）===")
-    probes = [
-        (r"C:\recorder\cloud_work\Lucas-Zhang-IG物理\vp_1_1.wav", "S002", "Lucas 课堂片段"),
-        (r"C:\recorder\cloud_work\Gavin-IG物理\vp_1_1.wav", "S004", "Gavin 课堂片段"),
-        (r"C:\recorder\cloud_work\Lucas-Zhang-IG物理\vp_0_0.wav", None, "教师片段（库中无，应低分）"),
-    ]
+    # 目录名含学生姓名，故不写进源码：从 cloud_work 下自动挑「同时有
+    # 学生片段 vp_1_*.wav 与教师片段 vp_0_*.wav」的课程目录。
+    _cw = Path(r"C:\recorder\cloud_work")
+    probes = []
+    if _cw.is_dir():
+        for _i, _d in enumerate(sorted((x for x in _cw.iterdir() if x.is_dir()),
+                                       key=lambda q: q.name), 1):
+            _stu = sorted(_d.glob("vp_1_*.wav"))
+            _tea = sorted(_d.glob("vp_0_*.wav"))
+            if _stu and _tea:
+                probes.append((str(_stu[0]), None, f"课程#{_i} 学生片段"))
+                probes.append((str(_tea[0]), None, f"课程#{_i} 教师片段"))
+            if len(probes) >= 4:
+                break
     for path, expect, label in probes:
         if not Path(path).exists():
             print(f"  -- {label}: 文件不存在，跳过")

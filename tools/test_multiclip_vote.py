@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """验证「多片段分别取 embedding 再投票」在 pipeline 路径上的效果。
 
-用 Lucas 课缓存（asr_cache.json 的句级 speaker_id + 本地 merged_16k.wav）复现
+用 学生乙 课缓存（asr_cache.json 的句级 speaker_id + 本地 merged_16k.wav）复现
 stages._voiceprint_local_match，并对比：
   A. 旧行为：把若干句拼接成一条 ≤25s 音频 → 单次比对
   B. 新行为：取 N 条独立片段 → 各自比对 → 票数聚合
@@ -23,10 +23,11 @@ sys.path.insert(0, str(ROOT / "recorder"))
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
+from _course import course                            # noqa: E402
 import stages                                        # noqa: E402
 from voiceprint_local import LocalVoiceprint         # noqa: E402
 
-WD = ROOT / "cloud_work" / "Lucas-Zhang-IG物理"
+WD = course("main")
 
 
 def main() -> int:
@@ -77,7 +78,7 @@ def main() -> int:
     print("C. 走完整 pipeline 函数 _voiceprint_local_match")
     print("=" * 74)
     out = stages._voiceprint_local_match(speakers, sentences, vp_cfg,
-                                         {"course_id": "Lucas-Zhang-IG物理"}, ctx)
+                                         {"course_id": WD.name}, ctx)
     for r in out:
         print(f"  speaker {r['speaker_id']} → {r['role']:8s} {r['person_name']:14s} "
               f"method={r['method']:22s} score={r.get('match_score')} "
@@ -91,7 +92,7 @@ def main() -> int:
     registry = stages._load_registry(vp_cloud, ctx)
     print(f"  注册库：{len(registry)} 条声纹")
     out2 = stages._voiceprint_api_match(speakers, sentences, registry, vp_cloud,
-                                        {"course_id": "Lucas-Zhang-IG物理"}, ctx)
+                                        {"course_id": WD.name}, ctx)
     for r in out2:
         print(f"  speaker {r['speaker_id']} → {r['role']:8s} {r['person_name']:14s} "
               f"method={r['method']:16s} score={r.get('match_score')} "

@@ -21,6 +21,7 @@ ROOT = Path(r"C:\recorder")
 sys.path.insert(0, str(ROOT / "cloud"))
 sys.path.insert(0, str(ROOT / "recorder"))
 
+from _course import course, person                   # noqa: E402
 from voiceprint_local import LocalVoiceprint          # noqa: E402
 
 
@@ -56,10 +57,10 @@ def main() -> int:
     print(f"投票片段数：{icfg['vote_clips']}，探测时长：{icfg['probe_sec']}s\n")
 
     cases = [
-        ("Lucas 课 · 开录后 40s",ROOT / "cloud_work/Lucas-Zhang-IG物理/merged_16k.wav", 60, "汤朔"),
-        ("Lucas 课 · 中段 40s", ROOT / "cloud_work/Lucas-Zhang-IG物理/merged_16k.wav", 1800, "汤朔"),
-        ("Gavin 课 · 开录后 40s", ROOT / "cloud_work/Gavin-IG物理/merged_16k.wav", 60, "汤朔"),
-        ("Gavin 课 · 中段 40s", ROOT / "cloud_work/Gavin-IG物理/merged_16k.wav", 1500, "汤朔"),
+        ("课A · 开录后 40s", course("main") / "merged_16k.wav", 60, person("teacher")),
+        ("课A · 中段 40s", course("main") / "merged_16k.wav", 1800, person("teacher")),
+        ("课B · 开录后 40s", course("cross") / "merged_16k.wav", 60, person("teacher")),
+        ("课B · 中段 40s", course("cross") / "merged_16k.wav", 1500, person("teacher")),
     ]
 
     for label, path, t0, expect in cases:
@@ -88,8 +89,8 @@ def main() -> int:
     from recorder import Lesson, Recorder                      # noqa: E402
     rec = Recorder(cfg)
     probes = [
-        ("汤朔", datetime(2026, 9, 11, 16, 30), datetime(2026, 9, 11, 18, 30)),
-        ("汤朔", datetime(2026, 9, 11, 19, 0), datetime(2026, 9, 11, 21, 0)),
+        (person("teacher"), datetime(2026, 9, 11, 16, 30), datetime(2026, 9, 11, 18, 30)),
+        (person("teacher"), datetime(2026, 9, 11, 19, 0), datetime(2026, 9, 11, 21, 0)),
     ]
     for teacher, st, en in probes:
         lesson = Lesson(course_id="PROBE", teacher=teacher, start=st, end=en,

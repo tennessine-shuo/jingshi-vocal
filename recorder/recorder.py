@@ -773,7 +773,7 @@ class Recorder:
                 ((self._load_cloud_config() or {}).get("voiceprint") or {}))
             if not ok:
                 # 兜底：防止"全场都是噪声、总有人以 0.001 的微弱优势胜出"被当真，
-                # 实测 Gavin 课开录 40s 就是这种情形（汤朔 0.249 vs Lucas 0.247）。
+                # 实测 学生丁 课开录 40s 就是这种情形（教师 0.249 vs 学生乙 0.247）。
                 _give_up("教师候选 %s 未过判据（%s）" % (teacher["person_name"], why))
                 return
 

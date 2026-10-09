@@ -6,7 +6,7 @@
 避免上一轮的残留混进安装包。
 
 密钥策略：cos.secret_id / cos.secret_key / llm.tokenhub_api_key
-一律替换为占位符（汤老师选择「可安全分发」）。装完后用『首次配置.bat』填入。
+一律替换为占位符（发行版选择「可安全分发」）。装完后用『首次配置.bat』填入。
 声纹库默认**不打包**（个人生物特征数据）；需要时把 INCLUDE_VOICEPRINT 置 True。
 
 用法：<出口python> make_payload.py
@@ -27,10 +27,11 @@ FILES = INSTALLER / "files"
 SRC = Path(r"C:\recorder")           # 开发机上的系统本体
 DESKTOP = Path(os.path.expanduser("~")) / "Desktop"
 
-PY_NODE = Path(r"C:\Users\汤朔\.workbuddy\binaries\node\versions\22.22.2-6\node.exe")
-LARK_SRC = Path(r"C:\Users\汤朔\.workbuddy\binaries\node\cli-connector-packages"
-                r"\node_modules\@larksuite\cli")
-PDF_GEN_SRC = Path(r"C:\Users\汤朔\.workbuddy\skills\teaching-eval\assets\generate_pdf.py")
+_WB = Path.home() / ".workbuddy"
+PY_NODE = _WB / "binaries" / "node" / "versions" / "22.22.2-6" / "node.exe"
+LARK_SRC = (_WB / "binaries" / "node" / "cli-connector-packages"
+            / "node_modules" / "@larksuite" / "cli")
+PDF_GEN_SRC = _WB / "skills" / "teaching-eval" / "assets" / "generate_pdf.py"
 FFMPEG_SRC = Path(r"C:\ffmpeg\bin\ffmpeg.exe")
 
 # 是否把声纹库（个人生物特征数据）打进安装包

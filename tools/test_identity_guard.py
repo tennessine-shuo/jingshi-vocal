@@ -6,7 +6,7 @@
      而 `_maybe_identify` 的停止条件是 `identity is not None` → **重试机制形同虚设**。
      开录 3 分钟（delay_sec）时教师往往还没开口，正好撞在这个坑上。
   ② 教师候选没有准入门槛 → 全场都是噪声时，谁以 0.001 的优势胜出谁就被当真。
-     实测 Gavin 课开录 40s：汤朔 0.249 / Lucas 0.247 / Gavin 0.241。
+     实测 学生丁 课开录 40s：教师 0.249 / 学生乙 0.247 / 学生丁 0.241。
 
 本测试用**真实实测数据**钉住判据边界，防止后续改动把它调坏。
 
@@ -20,7 +20,9 @@ from pathlib import Path
 
 ROOT = Path(r"C:\recorder")
 sys.path.insert(0, str(ROOT / "recorder"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from _course import course                                      # noqa: E402
 from recorder import Recorder                                   # noqa: E402
 
 VP_CFG = json.loads((ROOT / "cloud" / "cloud_config.json").read_text(
@@ -28,11 +30,11 @@ VP_CFG = json.loads((ROOT / "cloud" / "cloud_config.json").read_text(
 
 # (场景, 候选角色, 中位余弦, 领先第二名, 期望接受?)  —— 均来自 test_identify_chain.py 实测
 CASES = [
-    ("Lucas 课 · 中段 40s",     "teacher", 0.901, 0.374, True),
-    ("Gavin 课 · 中段 40s",     "teacher", 0.693, 0.025, True),
-    ("Lucas 课 · 开录后 40s",   "student", 0.497, 0.121, False),  # 角色门就挡住了
-    ("Gavin 课 · 开录后 40s",   "teacher", 0.249, 0.002, False),  # ← 关键：防噪声误判
-    ("Gavin 课 · 中段 次名",    "student", 0.668, None,  False),  # 学生不该被认成教师
+    ("学生乙 课 · 中段 40s",     "teacher", 0.901, 0.374, True),
+    ("学生丁 课 · 中段 40s",     "teacher", 0.693, 0.025, True),
+    ("学生乙 课 · 开录后 40s",   "student", 0.497, 0.121, False),  # 角色门就挡住了
+    ("学生丁 课 · 开录后 40s",   "teacher", 0.249, 0.002, False),  # ← 关键：防噪声误判
+    ("学生丁 课 · 中段 次名",    "student", 0.668, None,  False),  # 学生不该被认成教师
     ("假设 · 教师刚过下限",     "teacher", 0.330, 0.150, True),   # 走复合判据第二腿
     ("假设 · 教师达下限没领先", "teacher", 0.400, 0.050, False),
 ]
@@ -69,12 +71,12 @@ def integration() -> int:
     print("=" * 78)
 
     probes = [
-        ("Lucas 课 · 开录后 60s（教师尚未开口）",
-         ROOT / "cloud_work/Lucas-Zhang-IG物理/merged_16k.wav", 60, False, None),
-        ("Lucas 课 · 开录后 60s · 强制跳过能量门",
-         ROOT / "cloud_work/Lucas-Zhang-IG物理/merged_16k.wav", 60, False, "非教师"),
-        ("Lucas 课 · 中段 1800s（教师已讲授）",
-         ROOT / "cloud_work/Lucas-Zhang-IG物理/merged_16k.wav", 1800, True, None),
+        ("学生乙 课 · 开录后 60s（教师尚未开口）",
+         course("main") / "merged_16k.wav", 60, False, None),
+        ("学生乙 课 · 开录后 60s · 强制跳过能量门",
+         course("main") / "merged_16k.wav", 60, False, "非教师"),
+        ("学生乙 课 · 中段 1800s（教师已讲授）",
+         course("main") / "merged_16k.wav", 1800, True, None),
     ]
 
     bad = 0

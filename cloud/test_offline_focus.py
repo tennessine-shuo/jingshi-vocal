@@ -34,7 +34,7 @@ segments = tr["segments"]
 try:
     meta = store.get_json(META_KEY)
 except Exception:
-    meta = {"course_id": "TEST-001", "teacher": "汤朔",
+    meta = {"course_id": "TEST-001", "teacher": "老师",
             "start": "2026-09-04T20:30:30", "end": "2026-09-04T21:30:30",
             "duration_sec": 3600, "room_id": "room-01"}
 log.info("转写 %d 段", len(segments))

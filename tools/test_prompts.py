@@ -58,8 +58,8 @@ def _clean_backups(snap: set[str]) -> int:
 
 
 def main() -> int:
-    vals = {"meta": '{"student_name": "Lucas Zhang"}', "stats": '{"n": 96}',
-            "transcript": "[汤朔 0-14s] 今天讲牛顿第二定律。\n[Lucas Zhang 15-22s] 合力怎么算？"}
+    vals = {"meta": '{"student_name": "学生乙"}', "stats": '{"n": 96}',
+            "transcript": "[教师 0-14s] 今天讲牛顿第二定律。\n[学生乙 15-22s] 合力怎么算？"}
 
     print("=" * 74)
     print("1) 迁移一致性：新 render() 必须与旧写法逐字相同")
@@ -84,12 +84,12 @@ def main() -> int:
 
     # 文字版骨架：与 report.write_eval_txt 迁移前的 lines 拼接结果比对
     old4 = "\n".join([
-        "教评报告  2026年9月15日  Lucas Zhang  IG物理", "",
+        "教评报告  2026年9月15日  学生乙  IG物理", "",
         "上课内容", "", "CONTENT", "",
         "知识小结", "", "KNOW",
     ])
     new4 = P.render(P.DEFAULTS["eval_txt"]["text"], {
-        "date_cn": "2026年9月15日", "student": "Lucas Zhang", "course": "IG物理",
+        "date_cn": "2026年9月15日", "student": "学生乙", "course": "IG物理",
         "content_text": "CONTENT", "knowledge_text": "KNOW"})
     check("文字版报告骨架（旧 lines 拼接 vs 新 render）", old4 == new4,
           f"\n     旧 {old4!r}\n     新 {new4!r}")
@@ -209,14 +209,14 @@ def main() -> int:
     R._llm_chat = lambda messages, ctx: (calls.append(messages[0]["content"]), fake)[1]
     MS._llm_chat = R._llm_chat
 
-    segs = [{"person_name": "汤朔", "start_sec": 0, "end_sec": 10,
+    segs = [{"person_name": "教师", "start_sec": 0, "end_sec": 10,
              "text": "今天讲牛顿第二定律"}]
-    meta = {"student_name": "Lucas Zhang", "course_type": "IG物理",
+    meta = {"student_name": "学生乙", "course_type": "IG物理",
             "start": "2026-09-15T16:30:00"}
 
     rep = R.generate_report(segs, {"n": 1}, meta, {"config": {}})
     check("转写文本已注入发给大模型的词里", "今天讲牛顿第二定律" in calls[-1])
-    check("课程元数据同样注入", "Lucas Zhang" in calls[-1])
+    check("课程元数据同样注入", "学生乙" in calls[-1])
     txt = R.write_eval_txt(rep, meta)
     check("文字版报告按骨架渲染",
           txt.startswith("教评报告") and "上课内容" in txt and "OK" in txt,
@@ -241,7 +241,7 @@ def main() -> int:
                          "【自定义骨架】{student}｜{course}\n{content_text}\n{knowledge_text}")
         check("保存修改后的文字版骨架", ok, msg)
         check("→ 导出格式立即变化",
-              R.write_eval_txt(rep, meta).startswith("【自定义骨架】Lucas Zhang｜IG物理"),
+              R.write_eval_txt(rep, meta).startswith("【自定义骨架】学生乙｜IG物理"),
               repr(R.write_eval_txt(rep, meta)[:40]))
 
         calls.clear()

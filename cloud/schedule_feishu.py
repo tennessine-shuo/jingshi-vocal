@@ -29,7 +29,7 @@ from pathlib import Path
 log = logging.getLogger("schedule")
 
 # 课程类型中含以下词 → 视为会议（而非 1 对 1 / 班课），走会议纪要而非教评。
-# 实证：9/8 汤朔日程「10:00-12:00｜｜例会｜」course_type=例会、无学生、无授课类型。
+# 实证：9/8 教师日程「10:00-12:00｜｜例会｜」course_type=例会、无学生、无授课类型。
 MEETING_KEYWORDS = ("会议", "例会", "周会", "晨会", "夕会", "研讨会",
                     "培训会", "家长会", "备课会", "教研", "筹备")
 
@@ -50,7 +50,7 @@ def _pick(*cands: Path) -> str:
 
 def _dev_node_candidates() -> list[Path]:
     """开发机托管 Node：优先 22.x（本项目验证过的主版本），其次取最新。"""
-    base = Path(r"C:/Users/汤朔/.workbuddy/binaries/node/versions")
+    base = Path.home() / ".workbuddy" / "binaries" / "node" / "versions"
     if not base.is_dir():
         return []
     try:
@@ -64,8 +64,9 @@ def _dev_node_candidates() -> list[Path]:
 
 _BUNDLED_NODE = _ROOT_DIR / "vendor" / "node" / "node.exe"
 _BUNDLED_LARK = _ROOT_DIR / "vendor" / "node" / "lark-cli" / "scripts" / "run.js"
-_DEV_LARK = Path(r"C:/Users/汤朔/.workbuddy/binaries/node/cli-connector-packages"
-                 r"/node_modules/@larksuite/cli/scripts/run.js")
+_DEV_LARK = (Path.home() / ".workbuddy" / "binaries" / "node"
+             / "cli-connector-packages" / "node_modules"
+             / "@larksuite" / "cli" / "scripts" / "run.js")
 
 NODE_PATH_RESOLVED = _pick(_BUNDLED_NODE, *_dev_node_candidates())
 LARK_CLI_RESOLVED = _pick(_BUNDLED_LARK, _DEV_LARK)
@@ -73,10 +74,10 @@ LARK_CLI_RESOLVED = _pick(_BUNDLED_LARK, _DEV_LARK)
 # 默认配置（可被 cloud_config.json 的 feishu 节覆盖）
 DEFAULTS = {
     "enabled": True,
-    "base_token": "Xb34bXSVRaQk7ysfAQScPZp5nPh",
-    "schedule_table": "tblWoTVtU4lqJoes",
-    "student_table": "tblQGkH5DweXpOW8",
-    "teacher_name": "汤朔",        # 兼容保留（单值）；被 teacher_names 覆盖
+    "base_token": "",             # 必填：多维表格 app token（cloud_config.json 的 feishu 节）
+    "schedule_table": "",         # 必填：课表数据表 ID
+    "student_table": "",          # 必填：学生表 ID
+    "teacher_name": "",           # 兼容保留（单值）；被 teacher_names 覆盖
     "teacher_names": [],          # 录制触发覆盖的教师名单（列表优先）
     "node_path": NODE_PATH_RESOLVED,
     "lark_cli": LARK_CLI_RESOLVED,
@@ -225,7 +226,7 @@ def _looks_like_meeting(course_type: str = "", student_name: str = "",
 
 
 def _parse_label(label: str) -> tuple[str, str]:
-    """老师课程ID「13:30-15:30｜Lucas Zhang｜IG物理｜滨江」→ (学生名, 课程标签)。
+    """老师课程ID「13:30-15:30｜学生名｜IG物理｜校区」→ (学生名, 课程标签)。
     分隔符兼容全角｜(U+FF5C) 与盒线│(U+2502)。"""
     parts = [p.strip() for p in re.split(r"[｜│]", label) if p.strip()]
     if len(parts) >= 3:

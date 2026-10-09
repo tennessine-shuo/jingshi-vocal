@@ -5,7 +5,7 @@
 供成本优化决策。二者均开启说话人分离（SpeakerDiarization=1，仅 16k 单声道支持）。
 
 用法：python asr_ab_test.py <cos_seg_key> [输出json]
-  cos_seg_key  例如 jiaopei/room-01/20260909/潘奕恺-Alevel数学(M1)_20260909_130000_00008.wav
+  cos_seg_key  例如 jiaopei/room-01/20260909/学生丙-Alevel数学(M1)_20260909_130000_00008.wav
 默认把 A/B 结果写到 C:/recorder/reports/asr_ab_result.json
 """
 from __future__ import annotations

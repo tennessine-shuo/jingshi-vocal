@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""补跑失败课程：Lucas-Zhang-IG物理 / Gavin-IG物理（2026-09-11）。
+"""补跑失败课程：学生乙-IG物理 / 学生丁-IG物理（2026-09-11）。
 
 背景：2026-09-11 两次任务都因混元 hy3 免费额度耗尽（HTTP 402）在最后一步失败，
      前五步（录音/上传/ASR/声纹/课表）全部成功，产物被归档为 archived。
@@ -7,17 +7,17 @@
 
 两条路径共用同一个 _run()，但"句级列表从哪来"不同：
 
-  Gavin —— 本地已有完整转录（669 段）→ 跳过 ASR，零识别费用把
+  学生丁 —— 本地已有完整转录（669 段）→ 跳过 ASR，零识别费用把
            [{person_id,...,text}] 反推回 [{start_sec,end_sec,text,speaker_id}]，
            再走 clean_segments 重建，保证与主流程产物结构完全一致。
 
-  Lucas —— 转录未落盘，但 COS 上 `<course_id>_merged_16k.wav` 仍在
+  学生乙 —— 转录未落盘，但 COS 上 `<course_id>_merged_16k.wav` 仍在
            → 下载合并件 → 设 ctx["merged_wav"] / ctx["merged_url"]
            → 重跑 ASR（16k_zh_en_2.0，约 0.8 元/h × 1.8h ≈ 1.4 元）。
 
 用法:
-    python repair_20260911.py gavin     # 只补 Gavin（零成本）
-    python repair_20260911.py lucas     # 只补 Lucas（需 ASR）
+    python repair_20260911.py gavin     # 只补 学生丁（零成本）
+    python repair_20260911.py lucas     # 只补 学生乙（需 ASR）
     python repair_20260911.py both
 """
 from __future__ import annotations
@@ -45,9 +45,9 @@ DATE = "20260911"
 ROOM = "room-01"
 
 CASES = {
-    "gavin": {"course_id": "Gavin-IG物理",
-              "local": REPORTS / "archived_20260911_Gavin-IG物理_transcript.json"},
-    "lucas": {"course_id": "Lucas-Zhang-IG物理", "local": None},
+    "gavin": {"course_id": "学生丁-IG物理",
+              "local": REPORTS / "archived_20260911_学生丁-IG物理_transcript.json"},
+    "lucas": {"course_id": "学生乙-IG物理", "local": None},
 }
 
 
@@ -85,7 +85,7 @@ def _speakers_from_segments(cleaned: list[dict]) -> list[dict]:
 
 
 def _prepare_from_merged(pipe: Pipeline, ctx: dict, meta: dict) -> tuple[list, list]:
-    """Lucas 路径：优先用本地 ASR 缓存 → 否则下载合并件重跑 ASR → 声纹 → 清洗。
+    """学生乙 路径：优先用本地 ASR 缓存 → 否则下载合并件重跑 ASR → 声纹 → 清洗。
 
     本地缓存 cloud_work/<course_id>/asr_cache.json 保存句级结果，避免反复
     重跑 ASR 重复计费（一次约 1.4 元）。
@@ -124,7 +124,7 @@ def _prepare_from_merged(pipe: Pipeline, ctx: dict, meta: dict) -> tuple[list, l
 
 
 def _prepare_from_local(transcript: dict) -> tuple[list, list]:
-    """Gavin 路径：复用本地转录，零成本，不碰 ASR。"""
+    """学生丁 路径：复用本地转录，零成本，不碰 ASR。"""
     cleaned = transcript["segments"]
     speakers = _speakers_from_segments(cleaned)
     segments = clean_segments(_to_raw_segments(cleaned), speakers)

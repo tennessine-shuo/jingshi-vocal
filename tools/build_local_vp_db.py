@@ -15,26 +15,28 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, r"C:\recorder\cloud")
+from _course import course, enroll_sample, person  # noqa: E402
 from voiceprint_local import LocalVoiceprint  # noqa: E402
 
 DB = r"C:\recorder\cloud\voiceprint_local_db.json"
-LUCAS = Path(r"C:\recorder\cloud_work\Lucas-Zhang-IG物理")
-GAVIN = Path(r"C:\recorder\cloud_work\Gavin-IG物理")
+COURSE_A = course("main")
+COURSE_B = course("cross")
 
 # 注册集（同域课堂片段）
 ENROLL = [
-    ("T001", "汤朔", "teacher", [LUCAS / "vp_0_0.wav", GAVIN / "vp_0_0.wav"]),
-    ("S002", "Lucas Zhang", "student", [LUCAS / "vp_1_1.wav"]),
-    ("S004", "Gavin", "student", [GAVIN / "vp_1_1.wav"]),
+    ("T001", person("teacher"), "teacher",
+     [COURSE_A / "vp_0_0.wav", COURSE_B / "vp_0_0.wav"]),
+    ("S002", person("S002"), "student", [COURSE_A / "vp_1_1.wav"]),
+    ("S004", person("S004"), "student", [COURSE_B / "vp_1_1.wav"]),
 ]
 
 # 留出验证集（同课但不同片段，考查泛化）
 PROBES = [
-    (GAVIN / "vp_0_1.wav", "T001", "Gavin课·教师片段B"),
-    (GAVIN / "vp_1_0.wav", "S004", "Gavin课·学生片段B"),
-    (GAVIN / "vp_1_2.wav", "S004", "Gavin课·学生片段C"),
-    (LUCAS / "vp_1.wav", "S002", "Lucas课·学生片段B"),
-    (LUCAS / "vp_0_0.wav", "T001", "Lucas课·教师片段(注册集内)"),
+    (COURSE_B / "vp_0_1.wav", "T001", "学生丁课·教师片段B"),
+    (COURSE_B / "vp_1_0.wav", "S004", "学生丁课·学生片段B"),
+    (COURSE_B / "vp_1_2.wav", "S004", "学生丁课·学生片段C"),
+    (COURSE_A / "vp_1.wav", "S002", "学生乙课·学生片段B"),
+    (COURSE_A / "vp_0_0.wav", "T001", "学生乙课·教师片段(注册集内)"),
 ]
 
 
@@ -66,10 +68,10 @@ def main() -> int:
     print(f"\n  命中 {ok_n} / {len(PROBES)}")
 
     print("\n=== 3) 误识别压力测试：陌生人应低分 ===")
-    stranger = Path(r"C:\recorder\cloud_work\enroll_samples\S003_潘奕恺.wav")
-    if stranger.exists():
+    stranger = enroll_sample("S003_*.wav")
+    if stranger and stranger.exists():
         tops = db.verify_topk(str(stranger), topk=3)
-        print("  潘奕恺(近场,不在库中) → " +
+        print("  近场陌生人(不在库中) → " +
               " | ".join(f"{t['person_name']}={t['cosine']:.3f}" for t in tops))
 
     print("\n=== 4) 最终库 ===")

@@ -1,12 +1,17 @@
 # -*- coding: utf-8 -*-
 """探测 sherpa-onnx 声纹提取 API 的正确用法。"""
+import sys
 import wave
 
 import numpy as np
 import sherpa_onnx
 
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent))
+from _course import enroll_sample                        # noqa: E402
+
 MODEL = r"C:\recorder\models\campplus_sv_zh_16k.onnx"
-WAV = r"C:\recorder\cloud_work\enroll_samples\S002_Lucas Zhang.wav"
+_s = enroll_sample("S002_*.wav") or enroll_sample("*.wav")
+WAV = str(_s) if _s else r"C:\recorder\cloud_work\enroll_samples\<样本>.wav"
 
 # ---- 1. 构造配置（探测允许的参数名）----
 print("=== SpeakerEmbeddingExtractorConfig 构造 ===")

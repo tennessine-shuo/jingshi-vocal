@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """集成验证：直接调用 stages._voiceprint_local_match，走完整生产代码路径。
 
-用 Lucas 课的本地缓存（merged_16k.wav + asr_cache.json），零 ASR 费用。
+用 学生乙 课的本地缓存（merged_16k.wav + asr_cache.json），零 ASR 费用。
 """
 import json
 import logging
@@ -9,11 +9,13 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, r"C:\recorder\cloud")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
+from _course import course  # noqa: E402
 import stages  # noqa: E402
 
-WD = Path(r"C:\recorder\cloud_work\Lucas-Zhang-IG物理")
+WD = course("main")
 cfg = json.loads(Path(r"C:\recorder\cloud\cloud_config.json").read_text(encoding="utf-8"))
 
 sentences = json.loads((WD / "asr_cache.json").read_text(encoding="utf-8"))
@@ -31,7 +33,7 @@ for s in sentences:
 print(f"时间轴 {len(timeline)} 条")
 
 ctx = {"config": cfg, "workdir": str(WD), "merged_wav": str(WD / "merged_16k.wav"), "_asr": sentences}
-meta = {"course_id": "Lucas-Zhang-IG物理", "start": "2026-09-11T16:30:00", "end": "2026-09-11T18:30:00"}
+meta = {"course_id": WD.name, "start": "2026-09-11T16:30:00", "end": "2026-09-11T18:30:00"}
 
 print("\n=== 调用 stages._voiceprint_local_match（生产代码路径）===")
 res = stages._voiceprint_local_match(timeline, sentences, cfg["voiceprint"], meta, ctx)

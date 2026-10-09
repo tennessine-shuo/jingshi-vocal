@@ -28,7 +28,7 @@ tr = store.get_json("jiaopei/reports/20260908/课1000_transcript.json")
 segments = tr["segments"]
 
 meta = {
-    "course_id": "课1000", "teacher": "汤朔", "room_id": "room-01",
+    "course_id": "课1000", "teacher": "老师", "room_id": "room-01",
     "start": "2026-09-08T10:00:00", "end": "2026-09-08T11:33:03",
     "duration_sec": 5583,
 }
@@ -36,13 +36,14 @@ meta = {
 # 1) 验证课表匹配判为会议
 hit = match_lesson(datetime.fromisoformat(meta["start"]),
                    datetime.fromisoformat(meta["end"]),
-                   ctx={"config": cfg}, teacher_hint="汤朔")
+                   ctx={"config": cfg},
+                   teacher_hint=((cfg.get("feishu") or {}).get("teacher_name") or ""))
 log.info("课表匹配: matched=%s is_meeting=%s course=%s",
          hit.get("matched"), hit.get("is_meeting"), hit.get("course_type"))
 assert hit.get("matched") and hit.get("is_meeting"), "应判为会议"
 
 # 2) 模拟声纹结果里的 teacher
-meta["teacher"] = hit.get("teacher_name") or "汤朔"
+meta["teacher"] = hit.get("teacher_name") or "老师"
 
 # 3) 会议纪要（真实调用一次 LLM）
 ctx = {"store": store, "config": cfg,

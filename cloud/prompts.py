@@ -99,12 +99,12 @@ DEFAULTS: dict[str, dict] = {
         "vars": ["meta", "stats", "transcript"],
         "required": ["transcript"],
         "values": {
-            "meta": '{"student_name": "Lucas Zhang", "course_type": "IG物理", '
+            "meta": '{"student_name": "学生乙", "course_type": "IG物理", '
                     '"grade": "IG2", "start": "2026-09-15T16:30:00"}',
             "stats": '{"duration_min": 120, "n_turns": 96, "teacher_ratio": 0.62}',
-            "transcript": "[汤朔 0-14s] 今天讲牛顿第二定律，先看这个例题。\n"
-                          "[Lucas Zhang 15-22s] 老师，这里的合力怎么算？\n"
-                          "[汤朔 23-58s] 好问题，我们先把受力分析画出来……",
+            "transcript": "[教师 0-14s] 今天讲牛顿第二定律，先看这个例题。\n"
+                          "[学生乙 15-22s] 老师，这里的合力怎么算？\n"
+                          "[教师 23-58s] 好问题，我们先把受力分析画出来……",
         },
         "text": _TEACHING_EVAL,
     },
@@ -115,7 +115,7 @@ DEFAULTS: dict[str, dict] = {
         "vars": ["chunk"],
         "required": ["chunk"],
         "values": {
-            "chunk": "[汤朔 0-14s] 今天讲牛顿第二定律……\n[Lucas Zhang 15-22s] 合力怎么算？",
+            "chunk": "[教师 0-14s] 今天讲牛顿第二定律……\n[学生乙 15-22s] 合力怎么算？",
         },
         "text": _CHUNK_SUMMARY,
     },
@@ -127,8 +127,8 @@ DEFAULTS: dict[str, dict] = {
         "required": ["transcript"],
         "values": {
             "meta": '{"course_id": "校区例会", "start": "2026-09-15T10:00:00"}',
-            "transcript": "[汤朔 0-30s] 先过一下学生档案页面的进度。\n"
-                          "[袁楚然 31-55s] 这周能出第一版。",
+            "transcript": "[教师 0-30s] 先过一下学生档案页面的进度。\n"
+                          "[学生甲 31-55s] 这周能出第一版。",
         },
         "text": _MEETING_MINUTES,
     },
@@ -140,7 +140,7 @@ DEFAULTS: dict[str, dict] = {
         "required": ["content_text"],
         "values": {
             "date_cn": "2026年9月15日",
-            "student": "Lucas Zhang",
+            "student": "学生乙",
             "course": "IG物理",
             "content_text": "（由主提示词生成的上课内容，约400字）",
             "knowledge_text": "- 牛顿第二定律：F=ma\n- 受力分析步骤：先重力、再弹力、后摩擦力",

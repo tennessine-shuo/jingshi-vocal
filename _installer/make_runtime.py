@@ -29,7 +29,7 @@ STAGE = BUILD / "stage"
 TARGET_VENV = STAGE / "venv"
 TARGET_SP = TARGET_VENV / "Lib" / "site-packages"
 
-PY_SRC = Path(r"C:\Users\汤朔\.workbuddy\binaries\python\versions\3.13.12")
+PY_SRC = Path.home() / ".workbuddy" / "binaries" / "python" / "versions" / "3.13.12"
 VENV_SP = Path(r"C:\recorder\venv\Lib\site-packages")
 SYS32 = Path(r"C:\Windows\System32")
 

@@ -54,7 +54,7 @@ C:\recorder\venv\Scripts\python.exe make_sfx.py         :: 4) 打自解压包
 ### 2. 为什么必须删掉 `pyvenv.cfg`
 
 原 `C:\recorder\venv` 是标准 venv，`Scripts\python.exe` 只是 241KB 的重定向桩，
-`pyvenv.cfg` 指向 `C:\Users\汤朔\.workbuddy\binaries\python\versions\3.13.12`。
+`pyvenv.cfg` 指向 `C:\Users\<用户名>\.workbuddy\binaries\python\versions\3.13.12`。
 换台机器这个路径不存在，**必崩**。打包用的运行时里不能有任何 `pyvenv.cfg`。
 
 ### 3. 为什么安装目录固定为 `C:\recorder`
