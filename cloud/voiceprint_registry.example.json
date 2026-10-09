@@ -1,0 +1,4 @@
+{
+  "T001": {"person_id": "T001", "person_name": "张老师", "role": "teacher"},
+  "S001": {"person_id": "S001", "person_name": "李同学", "role": "student"}
+}

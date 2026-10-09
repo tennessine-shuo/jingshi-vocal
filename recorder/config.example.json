@@ -1,0 +1,23 @@
+{
+  "org_id": "your-org",
+  "room_id": "room-01",
+  "out_dir": "C:/recordings",
+  "audio_fmt": "dshow",
+  "audio_device": "audio=USB MIC",
+  "segment_seconds": 300,
+  "sample_rate": 16000,
+  "schedule_file": "lessons.json",
+  "enable_vad": true,
+  "voice_rms": 0.02,
+  "vad_start_sec": 3.0,
+  "vad_stop_sec": 180.0,
+  "vad_max_sec": 7200,
+  "local_retention_days": 7,
+  "local_cleanup_interval_sec": 1800,
+  "cos": {
+    "bucket": "your-bucket-1250000000",
+    "region": "ap-guangzhou",
+    "secret_id": "AKIDxxxxxxxxxxxxxxxxxxxx",
+    "secret_key": "xxxxxxxxxxxxxxxxxxxxxxxx"
+  }
+}

@@ -1,0 +1,66 @@
+# ============================================================
+#  课堂录制自动教评系统 —— 版本管理忽略规则
+#
+#  原则：只把「源码 / 文档 / 示例配置」纳入版本管理。
+#        凭据、生物特征、学生数据、运行时产物、大体积二进制一律排除。
+#
+#  新增文件前请先确认：它属于上面哪一类？
+# ============================================================
+
+# ---------- 1. 凭据：绝不能进仓库 ----------
+cloud/cloud_config.json
+recorder/config.json
+*.env
+.env
+*secret*.csv
+SecretKey.csv
+
+# ---------- 2. 生物特征与个人数据 ----------
+cloud/voiceprint_local_db.json
+cloud/voiceprint_registry.json
+cloud/voiceprint_local_backup/
+enroll_samples/
+
+# 云端工作区：内含以学生姓名命名的目录、音频、声纹片段
+cloud_work/
+
+# 飞书课表缓存：student 字段内含真实学生姓名
+recorder/lessons.json
+
+# ---------- 3. 运行期数据与产物 ----------
+logs/
+status/
+reports/
+*.log
+*_heartbeat.txt
+silence_map.txt
+rec_stderr_snap.txt
+TEST-001_report.txt
+
+# ---------- 4. 体积：运行时 / 构建产物 / 大二进制 ----------
+venv/
+_installer/build/
+_installer/files/sfx/payload.7z
+_installer/files/sfx/_pkg/
+models/
+*.7z
+*.exe
+*.zip
+*.onnx
+
+# ---------- 5. Python ----------
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+
+# ---------- 6. 编辑器 / 系统 ----------
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+*.lnk
+
+# 根目录下指向 start_all.bat 的本地快捷方式（实为无扩展名的 .lnk）
+启动课堂录制系统（含监控面板）
