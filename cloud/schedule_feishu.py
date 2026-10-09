@@ -9,8 +9,9 @@
    对手动录制、VAD 触发录制同样有效。
 
 数据源：飞书 Base「总日程表」
-  base  Xb34bXSVRaQk7ysfAQScPZp5nPh
-  table tblWoTVtU4lqJoes（课程安排主表）/ tblQGkH5DweXpOW8（学员信息表）
+  具体的 app token 与数据表 ID 属实例配置，不写进源码；
+  请填在 cloud_config.json 的 feishu 节（base_token / schedule_table / student_table）。
+  两张表分别是「课程安排主表」与「学员信息表」。
 
 调用通道：lark-cli（node 直调，规避 Git Bash 路径问题）。
 任何一步失败都只记日志并返回「未匹配」，绝不影响录制与报告主流程。
