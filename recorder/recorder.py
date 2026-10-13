@@ -10,6 +10,11 @@
       静音连续 >= vad_stop_sec 秒自动停止（仅对 VAD 课生效）
 VAD 课以 "VAD-" 前缀标识，最长录制 vad_max_sec 秒防失控；
 VAD 课进行中若课表课即将开始，自动切换为课表课。
+
+授课教师（2026-10-13 起）：课表归属不再依赖声纹识别 —— 由控制台
+「录课」页下拉栏手动选择授课教师（写入 config.json 的 selected_teacher，
+支持热切换）。VAD 触发的临时课以所选教师上报，云端按该教师的
+飞书课表匹配课程归属。
 """
 import argparse
 import json
@@ -18,7 +23,6 @@ import os
 import re
 import subprocess
 import sys
-import threading
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -29,7 +33,7 @@ _CLOUD_DIR = Path(__file__).resolve().parent.parent / "cloud"
 if str(_CLOUD_DIR) not in sys.path:
     sys.path.insert(0, str(_CLOUD_DIR))
 
-from audio_stream import DshowPcmStream, find_ffmpeg
+from audio_stream import find_ffmpeg
 from local_cleanup import delete_group, group_local, make_uploaded_checker
 from uploader import Uploader
 from vad import VadDetector
@@ -74,10 +78,6 @@ class Lesson:
         self.start = start
         self.end = end
         self.room = room
-        # 录音启动后由本地声纹识别出的身份 + 课表匹配结果（见 _identify_worker）。
-        # 不改 course_id/tag —— ffmpeg 的输出文件名在启动时已固定，中途改会让
-        # 分段 glob 失配；识别结果只随 meta 上报，由云端优先采信。
-        self.identity: dict | None = None
 
     @property
     def tag(self) -> str:
@@ -109,13 +109,6 @@ class Recorder:
         self.current: Lesson | None = None
         self.vad: VadDetector | None = None
         self._last_sweep = 0.0  # 上次本地回收的时间（monotonic），用于限频
-        # ---- 录音中身份识别（本地声纹 → 飞书课表）----
-        self._identity_thread: threading.Thread | None = None
-        self._identity_attempts: dict[str, int] = {}   # {tag: 已尝试次数}
-        self._identity_last_try: dict[str, float] = {}  # {tag: 上次尝试的 monotonic}
-        self._identity_probe: dict[str, dict] = {}      # {tag: 最近一次探测的结论（含失败）}
-        self._vp = None                                # 懒加载；False 表示不可用
-        self._cloud_cfg: dict | None = None
         # ---- 音频设备（控制台「麦克风」页热切换）----
         self._audio_busy = False          # 正在重载设备时置位，避免并发重入
         self._audio_note: dict | None = None   # 最近一次设备操作的结果（回显给控制台）
@@ -130,6 +123,8 @@ class Recorder:
             # 控制台要按 PID 停/重启服务；不能从 *.lock 读 —— 锁文件首字节被
             # msvcrt 独占锁定，运行期间外部读到的是 PermissionError。
             "pid": os.getpid(),
+            # 控制台「录课」页选择的授课教师（课表归属的依据）
+            "selected_teacher": (self.cfg.get("selected_teacher") or "").strip(),
         }
         state["audio"] = self._audio_brief()
         if self.current is not None:
@@ -144,7 +139,6 @@ class Recorder:
                 "trigger": self.current.trigger_type,
                 "segments": len(segs),
                 "bytes": sum(s.stat().st_size for s in segs),
-                "identity": self._identity_brief(),
             }
         _write_json_atomic(_STATUS_DIR / "recorder_status.json", state)
 
@@ -169,31 +163,6 @@ class Recorder:
         if self._audio_note:
             info["note"] = self._audio_note
         return info
-
-    def _identity_brief(self) -> dict | None:
-        """监控面板用的精简身份摘要。
-
-        已识别 → 教师/票数/课表；还没识别出来 → 回一个「识别中」状态，
-        带上已尝试次数与上次作废的原因，便于在面板上看出它到底有没有在跑
-        （否则 3 分钟一次的探测在界面上完全不可见）。
-        """
-        idt = self.current.identity if self.current else None
-        if not idt:
-            probe = self._identity_probe.get(self.current.tag) if self.current else None
-            if not probe:
-                return None
-            return {"teacher": None, "status": "识别中", **probe}
-        t = idt.get("teacher") or {}
-        sched = idt.get("schedule") or {}
-        return {
-            "teacher": t.get("person_name"),
-            "cosine": t.get("cosine"),
-            "votes": f"{t.get('votes')}/{idt.get('clips')}",
-            "source": idt.get("source"),
-            "course": sched.get("course_label"),
-            "student": sched.get("student_name"),
-            "at": idt.get("identified_at"),
-        }
 
     # ---------- 课表 ----------
     def fetch_lessons(self, day: datetime) -> list[Lesson]:
@@ -273,10 +242,14 @@ class Recorder:
             self._ff_log = None
 
     def start_vad_lesson(self, now: datetime) -> None:
-        """按 VAD 触发创建临时课并开始录制。"""
+        """按 VAD 触发创建临时课并开始录制。
+
+        教师取控制台选定的授课教师（selected_teacher）：云端课表匹配
+        完全依赖 meta 里的这个字段，不再做声纹识别兜底。
+        """
         lesson = Lesson(
             course_id="VAD-" + now.strftime("%Y%m%d_%H%M%S"),
-            teacher="未知",
+            teacher=(self.cfg.get("selected_teacher") or "").strip() or "未知",
             start=now,
             end=now + timedelta(seconds=self.cfg.get("vad_max_sec", 7200)),
             room=self.cfg["room_id"],
@@ -410,24 +383,26 @@ class Recorder:
         elif action == "reload_audio":
             # 控制台「麦克风」页保存后下发：换设备 / 改阈值，不重启进程
             self._apply_audio_config(data)
-        elif action == "identify_now":
-            # 控制台「声纹」页的「立即识别」：无视 delay_sec / 重试上限，
-            # 手动催一次（换老师带课、或自动重试已用尽额度时用）。
-            if self.current is None:
-                log.warning("立即识别被忽略：当前没有在录制")
-                return
-            if self._identity_thread is not None and self._identity_thread.is_alive():
-                log.info("立即识别：上一轮探测仍在进行，忽略本次")
-                return
-            tag = self.current.tag
-            self._identity_attempts.pop(tag, None)
-            self._identity_last_try.pop(tag, None)
-            self._identity_probe.pop(tag, None)
-            log.info("手动触发立即识别 tag=%s（已重置重试计数）", tag)
-            self._identity_thread = threading.Thread(
-                target=self._identify_worker, args=(self.current,),
-                daemon=True, name="identity-probe")
-            self._identity_thread.start()
+        elif action == "set_teacher":
+            # 控制台「录课」页下拉栏选择授课教师：热生效 + 写回 config.json
+            # （重启后仍生效）。云端课表匹配按 meta 里的教师归属课程。
+            teacher = (data.get("teacher") or "").strip()
+            old = (self.cfg.get("selected_teacher") or "").strip()
+            self.cfg["selected_teacher"] = teacher
+            try:
+                cfg_path = Path(self.cfg.get("_config_path")
+                                or (Path(__file__).resolve().parent / "config.json"))
+                new = json.loads(cfg_path.read_text(encoding="utf-8"))
+                new["selected_teacher"] = teacher
+                tmp = cfg_path.with_suffix(".json.tmp")
+                tmp.write_text(json.dumps(new, ensure_ascii=False, indent=2),
+                               encoding="utf-8")
+                tmp.replace(cfg_path)
+                log.info("授课教师已切换：%s → %s（%s）",
+                         old or "（未选）", teacher or "（未选）", cfg_path.name)
+            except Exception:  # noqa: BLE001
+                log.exception("selected_teacher 写回 config.json 失败"
+                              "（本进程内已生效，重启后回落旧值）")
 
     # ---------- 采集设备热重载（控制台「麦克风」页） ----------
     def _apply_audio_config(self, data: dict) -> None:
@@ -506,290 +481,6 @@ class Recorder:
         finally:
             self._audio_busy = False
 
-    # ---------- 录音中身份识别（本地声纹 → 飞书课表） ----------
-    #
-    # 动机：「课表触发」依赖 cloud_config.json 里写死的 teacher_name，
-    # 换老师带课就漏录；而 VAD 触发的课只有 "VAD-时间戳"，不知道是谁的课。
-    # 录制开始前没有音频，声纹无从谈起；所以身份识别只能在**开录之后**做：
-    #   开录 → 等 delay_sec 秒 → 本地声纹认出教师 → 用教师姓名反查飞书课表
-    # 结果随 meta 上报，云端据此获得正确的课程归属。
-
-    def _identity_cfg(self) -> dict:
-        return self.cfg.get("identity") or {}
-
-    def _load_cloud_config(self) -> dict | None:
-        """懒加载 cloud_config.json（课表反查需要其中的 feishu 节）。"""
-        if self._cloud_cfg is not None:
-            return self._cloud_cfg or None
-        path = Path(self._identity_cfg().get("cloud_config")
-                    or (_CLOUD_DIR / "cloud_config.json"))
-        try:
-            self._cloud_cfg = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:  # noqa: BLE001
-            log.warning("读取云端配置失败，身份识别将跳过课表反查：%s", path)
-            self._cloud_cfg = {}
-        return self._cloud_cfg or None
-
-    def _local_vp(self):
-        """懒加载本地声纹库；模型或库不可用时返回 None（只告警一次）。"""
-        if self._vp is not None:
-            return self._vp or None
-        try:
-            from voiceprint_local import LocalVoiceprint
-            cfg = self._identity_cfg()
-            kwargs = {}
-            if cfg.get("model"):
-                kwargs["model_path"] = cfg["model"]
-            if cfg.get("db"):
-                kwargs["db_path"] = cfg["db"]
-            self._vp = LocalVoiceprint(**kwargs)
-            log.info("本地声纹已加载：注册 %d 人", len(self._vp.persons))
-        except Exception as e:  # noqa: BLE001
-            log.warning("本地声纹不可用，跳过身份识别：%s", e)
-            self._vp = False
-        return self._vp or None
-
-    def _probe_audio(self, seconds: float):
-        """取一段课堂音频做声纹，返回 (float32 数组, 来源标签)。
-
-        优先复用 VAD 的环形缓冲 —— 那一路采集本来就在跑，取快照不新增
-        麦克风占用；VAD 未启用时才回退到独立采集一路 dshow
-        （生产已证同一麦克风可多路并行采集）。
-        """
-        if self.vad is not None:
-            audio = self.vad.snapshot_recent(seconds)
-            if audio is not None and len(audio):
-                return audio, "vad_buffer"
-        try:
-            import numpy as np
-            need = int(seconds * 16000)
-            blocks: list = []
-            got = 0
-            with DshowPcmStream(self.cfg["audio_device"],
-                                fmt=self.cfg.get("audio_fmt", "dshow"),
-                                sample_rate=16000, block_sec=0.5) as s:
-                for blk in s.blocks():
-                    blocks.append(blk)
-                    got += len(blk)
-                    if got >= need:
-                        break
-            if not blocks:
-                return None, "probe_empty"
-            return np.concatenate(blocks)[:need], "probe_stream"
-        except Exception as e:  # noqa: BLE001
-            log.warning("独立采集探测音频失败：%s", e)
-            return None, "probe_failed"
-
-    @staticmethod
-    def _audio_usable(audio, min_rms: float = 0.004) -> bool:
-        """探测音频是否够做声纹：至少 3 秒且能量不过低。
-
-        标定显示，静音/极低能量片段会产出接近零的 embedding，是"同人分布
-        出现负余弦"的主要来源 —— 与其拿它去比对（白跑一次联网/推理），
-        不如直接判为素材不足、等下一轮。
-        """
-        if audio is None or len(audio) < 16000 * 3:
-            return False
-        import numpy as np
-        return float(np.sqrt(np.mean(np.asarray(audio, dtype=np.float32) ** 2))) >= min_rms
-
-    @staticmethod
-    def _split_for_vote(audio, n: int) -> list:
-        """把一段音频均分成 n 段做多片段投票（每段至少 3 秒，否则不切）。"""
-        if audio is None or len(audio) == 0:
-            return []
-        n = max(1, min(int(n or 1), len(audio) // (16000 * 3)))
-        if n <= 1:
-            return [audio]
-        import numpy as np
-        return [a for a in np.array_split(audio, n) if len(a) > 16000]
-
-    def _match_lesson_online(self, teacher_name: str, lesson: Lesson) -> dict | None:
-        """用识别出的教师姓名反查飞书课表；失败返回 None，绝不影响录制。"""
-        cloud_cfg = self._load_cloud_config()
-        if not cloud_cfg:
-            return None
-        # VAD 课的 end 是"最长可录到"（默认 +2h），直接拿来当查询窗会误配到后面的课；
-        # 收紧到 match_window_min 分钟内的实际教学时长。
-        end = lesson.end
-        if lesson.is_vad:
-            end = min(end, lesson.start + timedelta(
-                minutes=int(self._identity_cfg().get("match_window_min", 90))))
-        try:
-            from schedule_feishu import match_lesson
-            r = match_lesson(lesson.start, end,
-                             ctx={"config": cloud_cfg}, teacher_hint=teacher_name)
-        except Exception as e:  # noqa: BLE001
-            log.warning("课表反查失败（教师=%s）：%s", teacher_name, e)
-            return None
-        return r if r.get("matched") else None
-
-    @staticmethod
-    def _teacher_accept(score: float, margin: float, vp_cfg: dict) -> tuple[bool, str]:
-        """教师候选的复合判据（与云端 / voiceprint_local 口径保持一致）。
-
-        教室是**远场录音**：教师的绝对余弦整体被压低，学生（离麦近）反而更高，
-        所以单看阈值会漏判教师。但教师一旦开口，领先第二名的幅度通常很明显 ——
-        用「绝对分 OR (下限 且 领先幅度)」两条腿走路。
-
-        标定依据（tools/calibrate_local_vp.py，9 门课 1305 条片段）：
-            单阈值 cos>=0.30              覆盖 72.4%  准确 92.8%
-            cos>=0.30 且 margin>=0.10     覆盖 57.1%  准确 96.9%
-        → 复合判据在同等覆盖率下准确率高约 4 个百分点。
-
-        返回 (是否接受, 人类可读的原因)。
-        """
-        thr = float(vp_cfg.get("local_threshold", 0.5))
-        floor = float(vp_cfg.get("local_floor", 0.32))
-        need = float(vp_cfg.get("local_margin", 0.12))
-        if score >= thr:
-            return True, f"中位余弦 {score:.3f} ≥ 阈值 {thr:.2f}"
-        if score >= floor and margin >= need:
-            return True, (f"中位余弦 {score:.3f} ≥ 下限 {floor:.2f} "
-                          f"且领先 {margin:.3f} ≥ {need:.2f}")
-        return False, (f"中位余弦 {score:.3f} < 阈值 {thr:.2f}，"
-                       f"且不满足「下限 {floor:.2f} + 领先 {need:.2f}」"
-                       f"（实际领先 {margin:.3f}）")
-
-    def _maybe_identify(self, now: datetime) -> None:
-        """按 delay_sec 触发身份识别，失败则按 retry_interval_sec 重试（非阻塞）。
-
-        时间参数由 tools/calibrate_local_vp.py 的实测标定：
-        以 40s 窗口做教师识别，命中率随开录时长显著上升 ——
-            开录后  30s → 1/5    60s → 2/5    90s → 3/5
-                   180s → 4/5   600s → 5/5
-        故首次尝试推迟到 3 分钟（此刻教师通常已进入讲授），并允许间隔重试。
-        重试间隔必须有：否则两次尝试拿到的几乎是同一段音频，等于白跑一遍。
-        """
-        cfg = self._identity_cfg()
-        if not cfg.get("enabled", True) or self.current is None:
-            return
-        if self.current.identity is not None:
-            return                                    # 身份已确定
-        if self._identity_thread is not None and self._identity_thread.is_alive():
-            return                                    # 上一次还没跑完
-        tag = self.current.tag
-        if (now - self.current.start).total_seconds() < float(cfg.get("delay_sec", 180)):
-            return                                    # 音频还不够
-        if self._identity_attempts.get(tag, 0) >= int(cfg.get("max_attempts", 3)):
-            return                                    # 试过上限，不再重试
-        gap = float(cfg.get("retry_interval_sec", 180))
-        if time.monotonic() - self._identity_last_try.get(tag, 0.0) < gap:
-            return                                    # 距上次尝试太近
-        self._identity_last_try[tag] = time.monotonic()
-        self._identity_attempts[tag] = self._identity_attempts.get(tag, 0) + 1
-        self._identity_thread = threading.Thread(
-            target=self._identify_worker, args=(self.current,),
-            daemon=True, name="identity-probe")
-        self._identity_thread.start()
-
-    def _identify_worker(self, lesson: Lesson) -> None:
-        """后台线程：取音频 → 本地声纹 → 飞书课表 → 写回 lesson.identity。"""
-        try:
-            cfg = self._identity_cfg()
-            vp = self._local_vp()
-            if vp is None:
-                return
-            if not vp.persons:
-                log.info("身份识别：本地声纹库为空，跳过（tag=%s）", lesson.tag)
-                return
-            audio, source = self._probe_audio(float(cfg.get("probe_sec", 60)))
-            if audio is None:
-                # "没素材"≠"识别失败"：不消耗重试额度，下一轮再取。
-                log.info("身份识别：未取到探测音频（%s），稍后重试，tag=%s", source, lesson.tag)
-                self._identity_probe[lesson.tag] = {
-                    "attempts": self._identity_attempts.get(lesson.tag, 0),
-                    "reason": f"未取到探测音频（{source}）",
-                }
-                self._identity_attempts[lesson.tag] = max(
-                    0, self._identity_attempts.get(lesson.tag, 1) - 1)
-                return
-            if not self._audio_usable(audio, float(cfg.get("min_rms", 0.004))):
-                # 质量不足≠识别失败，而是"还没有素材"：退回本次计数，
-                # 下一轮再试（仍受 retry_interval_sec 的最小间隔约束）。
-                log.info("身份识别：探测音频能量过低，稍后重试（tag=%s）", lesson.tag)
-                self._identity_probe[lesson.tag] = {
-                    "attempts": self._identity_attempts.get(lesson.tag, 0),
-                    "reason": "探测音频能量过低（教师还没开口）",
-                }
-                self._identity_attempts[lesson.tag] = max(
-                    0, self._identity_attempts.get(lesson.tag, 1) - 1)
-                return
-            # vote_clips 由标定确定：40s 窗口切 4 段（10s/段）反而比 1~2 段差，
-            # 因短片段 embedding 噪声大；2 段（20s/段）在实测中与整段等效且更稳。
-            clips = self._split_for_vote(audio, int(cfg.get("vote_clips", 2)))
-            res = vp.verify_multi_sources(clips, topk=3)
-            if not res.get("hit"):
-                log.info("身份识别：无有效片段（%s），稍后重试，tag=%s",
-                         res.get("reason"), lesson.tag)
-                self._identity_probe[lesson.tag] = {
-                    "attempts": self._identity_attempts.get(lesson.tag, 0),
-                    "reason": f"无有效片段（{res.get('reason')}）",
-                }
-                self._identity_attempts[lesson.tag] = max(
-                    0, self._identity_attempts.get(lesson.tag, 1) - 1)
-                return
-            top1 = res["tops"][0]
-            info = {
-                "identified_at": datetime.now().isoformat(timespec="seconds"),
-                "source": source,
-                "clips": res.get("clips", len(clips)),
-                "probe_sec": round(len(audio) / 16000.0, 1),
-                "teacher": top1 if top1.get("role") == "teacher" else None,
-                "tops": res.get("tops", []),
-                "margin": res.get("margin"),
-                "schedule": None,
-            }
-            teacher = info["teacher"]
-
-            def _give_up(reason: str) -> None:
-                """本轮作废：**绝不写 lesson.identity**。
-
-                原因：_maybe_identify 的停止条件是 `identity is not None`，
-                所以"识别失败"也必须保持 identity 为空，否则重试机制形同虚设 ——
-                开录 3 分钟时教师往往还没开口、Top-1 是学生，正好撞在这个坑上。
-                计数退回本次（同"能量过低"的处理），只受 retry_interval_sec 约束。
-                """
-                log.info("身份识别：%s，本轮作废，稍后重试（tag=%s）", reason, lesson.tag)
-                self._identity_probe[lesson.tag] = {
-                    "attempts": self._identity_attempts.get(lesson.tag, 0),
-                    "reason": reason,
-                    "tops": res.get("tops", [])[:2],
-                }
-                _write_json_atomic(_STATUS_DIR / f"identity_{lesson.tag}.json", info)
-                self._identity_attempts[lesson.tag] = max(
-                    0, self._identity_attempts.get(lesson.tag, 1) - 1)
-
-            if teacher is None:
-                # Top-1 是学生：这段音频里教师没说话，或教师声纹未注册
-                _give_up("Top-1 非教师（%s %s，余弦 %.3f）"
-                         % (top1.get("person_name"), top1.get("role"),
-                            float(top1.get("cosine") or 0.0)))
-                return
-
-            score = float(teacher.get("median") or teacher.get("cosine") or 0.0)
-            ok, why = self._teacher_accept(
-                score, float(res.get("margin") or 0.0),
-                ((self._load_cloud_config() or {}).get("voiceprint") or {}))
-            if not ok:
-                # 兜底：防止"全场都是噪声、总有人以 0.001 的微弱优势胜出"被当真，
-                # 实测 学生丁 课开录 40s 就是这种情形（教师 0.249 vs 学生乙 0.247）。
-                _give_up("教师候选 %s 未过判据（%s）" % (teacher["person_name"], why))
-                return
-
-            info["schedule"] = self._match_lesson_online(
-                teacher["person_name"], lesson)
-            sched = info["schedule"] or {}
-            log.info("身份识别：教师=%s（%s/%s 票，中位余弦 %.3f，%s；判据 %s）→ 课表 %s",
-                     teacher["person_name"], teacher.get("votes"), info["clips"],
-                     score, source, why,
-                     sched.get("course_label") or "未匹配")
-            lesson.identity = info
-            self._identity_probe.pop(lesson.tag, None)
-            _write_json_atomic(_STATUS_DIR / f"identity_{lesson.tag}.json", info)
-        except Exception:  # noqa: BLE001
-            log.exception("身份识别线程异常（忽略，不影响录制）")
-
     # ---------- 主循环 ----------
     def run_forever(self) -> None:
         vad: VadDetector | None = None
@@ -807,9 +498,6 @@ class Recorder:
             now = datetime.now()
             self.write_status()
             self._sweep_local()  # 周期回收本地已上传分段（内部限频）
-            # 开录 delay_sec 秒后触发一次身份识别（本地声纹 → 飞书课表）。
-            # 非阻塞：真正耗时的采集/推理在后台线程，不拖慢每秒的停止判定。
-            self._maybe_identify(now)
 
             # 1. 停止判定
             if self.current is not None:

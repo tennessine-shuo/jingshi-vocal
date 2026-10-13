@@ -30,12 +30,11 @@ NODE = ROOT / "vendor" / "node" / "node.exe"
 LARK = ROOT / "vendor" / "node" / "lark-cli" / "scripts" / "run.js"
 FFMPEG = ROOT / "ffmpeg" / "bin" / "ffmpeg.exe"
 PDFGEN = ROOT / "vendor" / "teaching_eval" / "generate_pdf.py"
-MODEL = ROOT / "models" / "campplus_sv_zh_16k.onnx"
 
 # 入口脚本（桌面快捷方式指向它们；不存在则退回通用启动器）
 ENTRIES = [
     ("课堂录制控制台", "启动课堂控制台.bat",
-     "打开统一控制台（总览/录课/声纹/麦克风/提示词/云端）"),
+     "打开统一控制台（总览/录课/麦克风/提示词/云端/飞书）"),
     ("一键重启课堂系统", "一键重启课堂系统.bat",
      "正在录制时中止，避免把一节课截断"),
     ("强制重启课堂系统", "强制重启课堂系统.bat",
@@ -250,8 +249,8 @@ def config() -> None:
     say("    recorder/config.json")
     check()
     say("\n⚠ 云端能力还需两步一次性准备：")
-    say("    1) 飞书授权：双击 _setup\\飞书登录.bat（浏览器设备流登录）")
-    say("    2) 声纹注册：控制台 →「声纹」页 注册授课教师（本机未带声纹库）")
+    say("    1) 飞书授权：双击 _setup\\飞书登录.bat 或控制台 →「飞书」页登录")
+    say("    2) 授课教师：控制台 →「录课」页下拉栏选择（课表匹配依据，无需声纹）")
 
 
 # ------------------------------------------------------------------ 自检
@@ -263,7 +262,6 @@ def check() -> None:
         ("Python 运行时", PY, True),
         ("pythonw", PYW, True),
         ("ffmpeg", FFMPEG, True),
-        ("声纹模型", MODEL, True),
         ("PDF 生成器", PDFGEN, True),
         ("Node 运行时", NODE, False),
         ("lark-cli", LARK, False),

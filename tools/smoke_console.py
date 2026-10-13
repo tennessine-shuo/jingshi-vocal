@@ -29,11 +29,14 @@ def main() -> int:
           "| 采集设备：", (win.rec_status.get("audio") or {}).get("device_name"))
     print("  流水线状态：", "有" if win.pipe_status else "无（未升级/未运行）")
     print("  告警：", win.alerts or "无")
-    print("  本地声纹库：", [f"{p['person_id']}/{p['name']}/{p['role']}"
-                             f"×{p['n_samples']}" for p in (win.local_vp or {}).get("persons", [])])
-    print("  云端声纹库：", (win.cloud_vp or {}).get("count"),
-          [f"{p.get('person_id')}/{p.get('person_name')}/本地有={p.get('in_local')}"
-           for p in (win.cloud_vp or {}).get("persons", [])])
+    print("  教师候选：", win.teacher_choices())
+    print("  选定授课教师：", win.selected_teacher or "（未选）")
+    rp = win.pages["录课"]
+    print("  录课页教师下拉：", [rp.cmb_teacher.itemText(i)
+                                for i in range(rp.cmb_teacher.count())],
+          "| 当前：", rp.cmb_teacher.currentText())
+    fp = win.pages["飞书"]
+    print("  飞书页状态：", fp.sts.text()[:80])
     print("  本地分段（未核验 COS）：", {t: len(v) for t, v in win.local_groups().items()} or "无")
     win.uploaded_checked_at = "smoke"
     win.check_uploaded()          # 真实核验一次，验证 COS 通路

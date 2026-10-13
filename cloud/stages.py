@@ -620,9 +620,19 @@ def _heuristic_match(speakers, sentences, meta) -> list[dict]:
                         "confidence": 0.6, "method": "heuristic"})
         else:
             out.append({**sp, "person_id": "unregistered",
-                        "person_name": "未识别学生", "role": "student",
+                        "person_name": "学生", "role": "student",
                         "confidence": 0.0, "method": "heuristic"})
     return out
+
+
+def heuristic_roles(speakers: list[dict], meta: dict, ctx: dict) -> list[dict]:
+    """声纹取消后的角色判定（2026-10-13 起）。
+
+    教师归属采信 meta.teacher（录制端手动选定或课表自带），说话人角色用
+    启发式：发言总时长最长者 = 教师，其余 = 学生。零 API 调用、零额外成本。
+    """
+    sentences = ctx.get("_asr") or _run_asr_task(meta, ctx)
+    return _heuristic_match(speakers, sentences, meta)
 
 
 # ---------------------------------------------------------------- 4. 语义清洗 + 统计

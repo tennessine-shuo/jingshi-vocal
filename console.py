@@ -3,17 +3,20 @@
 
 把原先散在三处的运维面收进一个前端：
 
-    录课终端 recorder.py      录课 / VAD / 录音中声纹识别
-    云端流水线 auto_pipeline.py  COS 巡检 → ASR → 声纹 → 报告
+    录课终端 recorder.py      录课 / VAD / 手动选定授课教师
+    云端流水线 auto_pipeline.py  COS 巡检 → ASR → 角色判定 → 报告
     监控面板 monitor_gui.py     只读状态
 
-控制台做三件原先没人做的事：
+控制台做四件原先没人做的事：
   1. **托管服务**：进程状态一眼可见，可一键拉起 / 重启；可选「自动守护」——
      发现服务掉线自动拉回来。2026-09-14 16:13 recorder 静默死亡、
      之后 23 小时无人察觉、当天 3 节课全丢，就是因为没人盯这个。
   2. **换麦克风**（「麦克风」页）：枚举 dshow 设备 → 实时电平 → 一键校准
      VAD 阈值 → 热重载生效（不重启进程、不断录制）。
-  3. **声纹可见**：本地库 / 云端库清单 + 当前这节课认成了谁 + 立即识别。
+  3. **选定授课教师**（「录课」页下拉栏）：课表归属不再依赖声纹识别，
+     由人工选定教师，云端按该教师的飞书课表匹配课程。
+  4. **飞书登录**（「飞书」页）：查看 OAuth 授权状态，一键登录 / 登出
+     （课表同步依赖 lark-cli 的用户授权态）。
 
 数据来源（全部是文件，前后端零耦合）：
   status/recorder_status.json      录制服务每秒写
@@ -147,7 +150,7 @@ SERVICES: dict[str, dict] = {
         "lock": "recorder",
         "status": STATUS_DIR / "recorder_status.json",
         "fresh_sec": 15,
-        "desc": "ffmpeg dshow 采集 + VAD 触发 + 录音中本地声纹识别",
+        "desc": "ffmpeg dshow 采集 + VAD 触发 + 手动选定授课教师",
     },
     "pipeline": {
         "title": "云端流水线",
@@ -156,7 +159,7 @@ SERVICES: dict[str, dict] = {
         "lock": "auto_pipeline",
         "heartbeat": ROOT / "auto_pipeline_heartbeat.txt",
         "fresh_sec": 300,
-        "desc": "COS 巡检 → ASR 转写 → 声纹 → 报告回传",
+        "desc": "COS 巡检 → ASR 转写 → 角色判定 → 报告回传",
     },
 }
 
@@ -593,22 +596,53 @@ class RecordPage(QWidget):
         f3.addLayout(row3)
         v.addWidget(gb3)
 
-        gb4 = QGroupBox("身份识别（录音中：本地声纹 → 飞书课表）")
+        gb4 = QGroupBox("授课教师（课表匹配依据）")
         f4 = QVBoxLayout(gb4)
-        self.idt = QLabel("—"); self.idt.setWordWrap(True)
-        f4.addWidget(self.idt)
         row4 = QHBoxLayout()
-        self.btn_identify = QPushButton("立即识别一次")
-        self.btn_identify.clicked.connect(
-            lambda: self.win.send_control({"action": "identify_now"}))
-        row4.addWidget(self.btn_identify)
-        self.btn_idt_file = QPushButton("打开诊断文件")
-        self.btn_idt_file.clicked.connect(self.win.open_identity_dir)
-        row4.addWidget(self.btn_idt_file)
-        row4.addStretch(1)
+        row4.addWidget(QLabel("当前这间教室的授课老师："))
+        self.cmb_teacher = QComboBox()
+        self.cmb_teacher.setEditable(True)
+        self.cmb_teacher.setMinimumWidth(200)
+        self.cmb_teacher.setToolTip(
+            "下拉选择或直接输入教师姓名（需与飞书课表「老师」列一致）。\n"
+            "VAD / 手动触发的录制按此教师上报，云端按他/她的课表匹配课程；\n"
+            "课表触发的录制沿用课表里的真实教师，不受此选择影响。")
+        row4.addWidget(self.cmb_teacher, 1)
+        self.btn_teacher = QPushButton("应用")
+        self.btn_teacher.clicked.connect(self.apply_teacher)
+        row4.addWidget(self.btn_teacher)
         f4.addLayout(row4)
+        self.lbl_teacher = QLabel("—")
+        self.lbl_teacher.setWordWrap(True)
+        self.lbl_teacher.setStyleSheet("color:#666;")
+        f4.addWidget(self.lbl_teacher)
         v.addWidget(gb4)
         v.addStretch(1)
+
+    # -- 授课教师 ---------------------------------------------------------
+    def reload_teachers(self) -> None:
+        """填充教师候选：云配置教师名单 + 今日课表里出现的教师（去重保序）。"""
+        current = (self.win.rec_status or {}).get("selected_teacher") \
+            or self.win.selected_teacher or ""
+        names = self.win.teacher_choices()
+        self.cmb_teacher.blockSignals(True)
+        self.cmb_teacher.clear()
+        for n in names:
+            self.cmb_teacher.addItem(n)
+        if current:
+            idx = self.cmb_teacher.findText(current)
+            if idx >= 0:
+                self.cmb_teacher.setCurrentIndex(idx)
+            else:
+                self.cmb_teacher.setCurrentText(current)
+        self.cmb_teacher.blockSignals(False)
+
+    def apply_teacher(self) -> None:
+        name = self.cmb_teacher.currentText().strip()
+        if not name:
+            QMessageBox.warning(self, "未选择", "请先选择或输入授课教师姓名。")
+            return
+        self.win.set_selected_teacher(name)
 
     def refresh(self) -> None:
         rec = self.win.rec_status or {}
@@ -722,26 +756,21 @@ class RecordPage(QWidget):
         self.btn_retry.setText("补传中…" if self.win.retry_busy else "补传未上传")
         self.btn_verify.setEnabled(not busy)
 
-        # 身份识别
-        idt = rec_lesson.get("identity") or {}
-        if idt.get("teacher"):
-            sched = idt.get("schedule") or {}
-            self.idt.setText(
-                f"✅ 教师：{idt['teacher']}（票 {idt.get('votes')}，中位 "
-                f"{idt.get('median') if idt.get('median') is not None else idt.get('cosine')}）\n"
-                f"课表归属：{sched.get('course_label') or '未匹配'}"
-                + (f"　来源 {idt.get('source')}" if idt.get("source") else ""))
-            self.idt.setStyleSheet(f"color:{GREEN};")
-        elif idt.get("status"):
-            self.idt.setText(
-                f"⏳ {idt.get('status')}：已尝试 {idt.get('attempts', 0)} 次"
-                f"　上次作废原因：{idt.get('reason') or '—'}")
-            self.idt.setStyleSheet(f"color:{ORANGE};")
+        # 授课教师（下拉候选每次刷新时轻量补齐；不打断正在输入的文本）
+        self.reload_teachers()
+        sel = self.win.selected_teacher
+        rec_sel = (rec.get("selected_teacher") or "").strip()
+        if rec_sel:
+            self.lbl_teacher.setText(
+                f"✅ 录课服务当前使用：{rec_sel}"
+                + ("" if rec_sel == (sel or rec_sel) else
+                   f"（下拉栏为 {sel}，点「应用」同步）"))
+            self.lbl_teacher.setStyleSheet(f"color:{GREEN};")
         else:
-            self.idt.setText("暂无识别记录（开录 3 分钟后首次探测）"
-                             if recording else "—")
-            self.idt.setStyleSheet(f"color:{GREY};")
-        self.btn_identify.setEnabled(recording)
+            self.lbl_teacher.setText(
+                "⚠ 尚未选定授课教师 —— VAD / 手动触发的录制会以「未知」上报，"
+                "云端无法匹配课表，将仅存档不出报告。")
+            self.lbl_teacher.setStyleSheet(f"color:{ORANGE};")
 
 
 # ---------------------------------------------------------------- 页：麦克风
@@ -952,117 +981,264 @@ class AudioPage(QWidget):
             self.cur_bar.set_data([], thr)
 
 
-# ---------------------------------------------------------------- 页：声纹
+# ---------------------------------------------------------------- 页：飞书
 
-class VoiceprintPage(QWidget):
+def _lark_paths() -> tuple[str, str]:
+    """解析 lark-cli 运行入口（复用 cloud/schedule_feishu 的定位逻辑：
+    安装包 → vendor/node；开发机 → .workbuddy 托管目录）。"""
+    try:
+        if str(CLOUD_DIR) not in sys.path:
+            sys.path.insert(0, str(CLOUD_DIR))
+        from schedule_feishu import NODE_PATH_RESOLVED, LARK_CLI_RESOLVED
+        return NODE_PATH_RESOLVED, LARK_CLI_RESOLVED
+    except Exception:  # noqa: BLE001
+        return "", ""
+
+
+def run_lark(args: list[str], timeout: int = 30) -> dict:
+    """跑一条 lark-cli 子命令，返回 {ok, data|raw|error}。不抛异常。"""
+    node, lark = _lark_paths()
+    if not node or not lark or not Path(node).exists() or not Path(lark).exists():
+        return {"ok": False, "error": f"lark-cli 不可用：node={node or '未找到'}，"
+                                      f"lark={lark or '未找到'}"}
+    try:
+        r = subprocess.run([node, lark, *args], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=timeout,
+                           creationflags=(subprocess.CREATE_NO_WINDOW
+                                          if os.name == "nt" else 0))
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": f"命令超时（>{timeout}s）"}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    out = (r.stdout or "").strip()
+    if r.returncode != 0:
+        return {"ok": False, "error": (r.stderr or out
+                                       or f"退出码 {r.returncode}")[:300]}
+    try:
+        return {"ok": True, "data": json.loads(out)}
+    except ValueError:
+        return {"ok": True, "raw": out}
+
+
+class LarkCmdWorker(QThread):
+    """后台执行一条 lark-cli 命令（状态查询 / 登出等短命令）。"""
+    done = Signal(dict)
+
+    def __init__(self, args: list[str], timeout: int = 30):
+        super().__init__()
+        self.args, self.timeout = args, timeout
+
+    def run(self) -> None:
+        self.done.emit(run_lark(self.args, self.timeout))
+
+
+class LarkLoginStartWorker(QThread):
+    """设备流登录第一步：发起授权、立即拿验证 URL（不等待）。"""
+    done = Signal(dict)
+
+    def run(self) -> None:
+        self.done.emit(run_lark(["auth", "login", "--no-wait", "--json"], 60))
+
+
+class LarkLoginPollWorker(QThread):
+    """设备流登录第二步：用 device_code 轮询，直到用户在浏览器完成授权。
+
+    设备码有效期 10 分钟；超时/失败都以 done 上报，由界面提示重试。
+    """
+    done = Signal(dict)
+
+    def __init__(self, device_code: str):
+        super().__init__()
+        self.device_code = device_code
+
+    def run(self) -> None:
+        self.done.emit(run_lark(
+            ["auth", "login", "--device-code", self.device_code], 700))
+
+
+class FeishuPage(QWidget):
+    """飞书 OAuth 授权管理：课表同步依赖 lark-cli 的用户登录态。
+
+    登录走 Device Flow：点「登录」→ 拿到验证 URL → 自动打开浏览器 →
+    用户在飞书页面确认 → 后台轮询完成授权。全程无需手动复制粘贴。
+    """
+
     def __init__(self, win: "Console"):
         super().__init__()
         self.win = win
+        self._status_worker: LarkCmdWorker | None = None
+        self._start_worker: LarkLoginStartWorker | None = None
+        self._poll_worker: LarkLoginPollWorker | None = None
+        self._logout_worker: LarkCmdWorker | None = None
+        self._tick = 0
+
         v = QVBoxLayout(self)
 
-        gb = QGroupBox("当前这节课认成谁（录音中才有）")
+        gb = QGroupBox("授权状态")
         f = QVBoxLayout(gb)
-        self.idt = QLabel("—"); self.idt.setWordWrap(True)
-        f.addWidget(self.idt)
+        self.sts = QLabel("查询中…")
+        self.sts.setWordWrap(True)
+        self.sts.setFont(QFont("Microsoft YaHei", 11))
+        f.addWidget(self.sts)
         row = QHBoxLayout()
-        self.btn_now = QPushButton("立即识别一次")
-        self.btn_now.clicked.connect(
-            lambda: self.win.send_control({"action": "identify_now"}))
-        row.addWidget(self.btn_now)
-        self.btn_open = QPushButton("打开诊断目录")
-        self.btn_open.clicked.connect(self.win.open_identity_dir)
-        row.addWidget(self.btn_open)
+        self.btn_refresh = QPushButton("刷新状态")
+        self.btn_refresh.clicked.connect(self.refresh_status)
+        row.addWidget(self.btn_refresh)
         row.addStretch(1)
         f.addLayout(row)
         v.addWidget(gb)
 
-        gb2 = QGroupBox("本地声纹库（离线识别，零调用费）")
+        gb2 = QGroupBox("登录（飞书 OAuth · 设备流）")
         f2 = QVBoxLayout(gb2)
-        self.local = QLabel("—"); self.local.setWordWrap(True)
-        f2.addWidget(self.local)
+        row2 = QHBoxLayout()
+        self.btn_login = QPushButton("登录飞书")
+        self.btn_login.setStyleSheet(
+            "QPushButton{background:#339af0;color:white;padding:6px 14px;border-radius:4px;}")
+        self.btn_login.clicked.connect(self.start_login)
+        row2.addWidget(self.btn_login)
+        self.btn_logout = QPushButton("登出")
+        self.btn_logout.clicked.connect(self.logout)
+        row2.addWidget(self.btn_logout)
+        row2.addStretch(1)
+        f2.addLayout(row2)
+        self.log = QPlainTextEdit()
+        self.log.setReadOnly(True)
+        self.log.setMaximumHeight(180)
+        self.log.setPlaceholderText("登录过程信息会显示在这里…")
+        f2.addWidget(self.log)
         v.addWidget(gb2)
 
-        gb3 = QGroupBox("腾讯云声纹库（云端流水线用）")
+        gb3 = QGroupBox("说明")
         f3 = QVBoxLayout(gb3)
-        self.cloud = QLabel("—"); self.cloud.setWordWrap(True)
-        f3.addWidget(self.cloud)
-        v.addWidget(gb3)
-
-        gb4 = QGroupBox("说明")
-        f4 = QVBoxLayout(gb4)
         tip = QLabel(
-            "本地库用于「录音中身份识别」：开录 3 分钟后取 60 秒音频做声纹，\n"
-            "认出教师后用姓名反查飞书课表，把 VAD 触发的临时课归属到正确课程。\n"
-            "失败会每 3 分钟自动重试（最多 3 次），也可手动「立即识别一次」。\n\n"
-            "云端库用于整节课的教师/学生切分，与本地库相互独立——\n"
-            "云端声纹库无法迁移到本地模型（向量空间不互通），需用课堂片段重新注册。\n\n"
-            "注册工具：C:\\recorder\\voiceprint_enroll_gui.py\n"
-            "　• 选中已注册的人 →「✎ 编辑 / 重新录制」→ 可换掉这个人的声音\n"
-            "　　（云端原地更新，声纹 ID 不变，不会多出一条记录）\n"
-            "　• 列表里「本地库」列标 ✗ 的人 →「⬇ 补录到本地库」可补上\n"
-            "　• 本地库素材要选课堂远场片段：近场留存样本同人余弦会从 0.8 掉到 0.3")
-        tip.setWordWrap(True); tip.setStyleSheet("color:#555;")
-        f4.addWidget(tip)
-        row4 = QHBoxLayout()
-        b_enroll = QPushButton("打开声纹注册工具")
-        b_enroll.setToolTip(
-            "声纹工具（独立窗口）：注册新人 / 重新录制已有的人 / 把遗漏的人补录到本地库")
-        b_enroll.clicked.connect(self.win.open_enroll_tool)
-        row4.addWidget(b_enroll)
-        row4.addStretch(1)
-        f4.addLayout(row4)
-        v.addWidget(gb4)
+            "什么情况需要登录：\n"
+            "　• 新机器安装后首次使用（授权态存在 %USERPROFILE%\\.lark-cli，无法跨机复制）\n"
+            "　• 「云端」页课表同步一直 ❌、或总览课表为空\n\n"
+            "登录流程：点「登录飞书」→ 浏览器自动打开飞书授权页 → 扫码/确认 →\n"
+            "本页自动显示已登录。授权默认 7 天有效，过期后重新登录一次即可。\n"
+            "课表同步由云端流水线执行（约 10 分钟一次），登录后等一两轮即可看到课表。")
+        tip.setWordWrap(True)
+        tip.setStyleSheet("color:#555;")
+        f3.addWidget(tip)
+        v.addWidget(gb3)
         v.addStretch(1)
 
+        QTimer.singleShot(800, self.refresh_status)
+
+    # ---------------- 状态 ----------------
+    def _say(self, text: str, color: str = GREY) -> None:
+        self.sts.setText(text)
+        self.sts.setStyleSheet(f"color:{color};")
+
+    def refresh_status(self) -> None:
+        if self._status_worker is not None and self._status_worker.isRunning():
+            return
+        self._status_worker = LarkCmdWorker(["auth", "status"], 30)
+        self._status_worker.done.connect(self._status_done)
+        self._status_worker.start()
+
+    def _status_done(self, res: dict) -> None:
+        if not res.get("ok"):
+            self._say(f"❌ 无法查询登录状态：{res.get('error', '?')}", RED)
+            return
+        data = res.get("data") or {}
+        user = (data.get("identities") or {}).get("user") or {}
+        name = user.get("userName") or ""
+        if user.get("status") == "ready" and user.get("available", True):
+            exp = str(user.get("expiresAt") or "").replace("T", " ")[:16]
+            self._say(f"✅ 已登录：{name or '（飞书用户）'}"
+                      + (f"　访问令牌有效期至 {exp}" if exp else ""), GREEN)
+        else:
+            msg = user.get("message") or "未登录"
+            self._say(f"⚠ 未登录（{msg}）—— 点下方「登录飞书」，"
+                      "否则课表同步无法工作。", ORANGE)
+
+    # ---------------- 登录 / 登出 ----------------
+    def _append(self, text: str) -> None:
+        self.log.appendPlainText(text)
+
+    def start_login(self) -> None:
+        if self._poll_worker is not None and self._poll_worker.isRunning():
+            QMessageBox.information(self, "登录进行中",
+                                    "上一轮登录还在等待你在浏览器里确认。")
+            return
+        if self._start_worker is not None and self._start_worker.isRunning():
+            return
+        self.btn_login.setEnabled(False)
+        self._append(f"[{datetime.now():%H:%M:%S}] 正在发起授权…")
+        self._start_worker = LarkLoginStartWorker()
+        self._start_worker.done.connect(self._login_started)
+        self._start_worker.start()
+
+    def _login_started(self, res: dict) -> None:
+        self.btn_login.setEnabled(True)
+        if not res.get("ok"):
+            self._append(f"发起授权失败：{res.get('error', '?')}")
+            QMessageBox.warning(self, "登录失败", str(res.get("error")))
+            return
+        data = res.get("data") or {}
+        url = data.get("verification_url") or ""
+        code = data.get("device_code") or ""
+        if not url or not code:
+            self._append(f"授权响应不完整：{str(data)[:200]}")
+            QMessageBox.warning(self, "登录失败", "lark-cli 未返回验证链接，详见日志。")
+            return
+        expires = int(data.get("expires_in") or 600)
+        self._append(f"验证链接（{expires // 60} 分钟内有效）：\n{url}")
+        self._append("已尝试自动打开浏览器；若没弹出，请手动复制上面的链接。")
+        try:
+            os.startfile(url)  # noqa: S606
+        except Exception:  # noqa: BLE001
+            pass
+        self.btn_login.setEnabled(False)
+        self.btn_login.setText("等待授权确认…")
+        self._poll_worker = LarkLoginPollWorker(code)
+        self._poll_worker.done.connect(self._login_done)
+        self._poll_worker.start()
+
+    def _login_done(self, res: dict) -> None:
+        self.btn_login.setEnabled(True)
+        self.btn_login.setText("登录飞书")
+        self._poll_worker = None
+        if not res.get("ok"):
+            self._append(f"登录未完成：{res.get('error', '?')}")
+            QMessageBox.warning(self, "登录未完成",
+                                f"{res.get('error')}\n\n请点「登录飞书」重试。")
+            return
+        data = res.get("data") or {}
+        ident = (data.get("identities") or {}).get("user") or {}
+        name = ident.get("userName") or data.get("userName") or ""
+        self._append(f"[{datetime.now():%H:%M:%S}] ✅ 登录成功：{name or '飞书用户'}")
+        QMessageBox.information(self, "登录成功",
+                                f"已登录：{name or '飞书用户'}\n"
+                                "课表同步会在下一轮自动恢复（约 10 分钟内）。")
+        self.refresh_status()
+
+    def logout(self) -> None:
+        if QMessageBox.question(
+                self, "登出飞书",
+                "确定登出当前飞书账号？\n登出后课表同步立即停止，直到重新登录。") \
+                != QMessageBox.StandardButton.Yes:
+            return
+        w = LarkCmdWorker(["auth", "logout", "--json"], 30)
+        self._logout_worker = w
+        w.done.connect(self._logout_done)
+        w.start()
+
+    def _logout_done(self, res: dict) -> None:
+        self._append(f"[{datetime.now():%H:%M:%S}] "
+                     + ("已登出" if res.get("ok")
+                        else f"登出失败：{res.get('error', '?')}"))
+        self.refresh_status()
+
+    # ---------------- 周期刷新 ----------------
     def refresh(self) -> None:
-        rec_lesson = (self.win.rec_status or {}).get("lesson") or {}
-        idt = rec_lesson.get("identity") or {}
-        if idt.get("teacher"):
-            s = idt.get("schedule") or {}
-            self.idt.setText(
-                f"✅ {idt['teacher']}　票 {idt.get('votes')}　中位 "
-                f"{idt.get('median')}\n课表：{s.get('course_label') or '未匹配'}")
-            self.idt.setStyleSheet(f"color:{GREEN};")
-        elif idt.get("status"):
-            self.idt.setText(f"⏳ {idt['status']}　已尝试 {idt.get('attempts', 0)} 次\n"
-                             f"上次作废：{idt.get('reason') or '—'}")
-            self.idt.setStyleSheet(f"color:{ORANGE};")
-        else:
-            self.idt.setText("当前没有在录制，或尚未到首次探测时间")
-            self.idt.setStyleSheet(f"color:{GREY};")
-
-        lb = self.win.local_vp
-        if lb:
-            lines = [f"模型：{Path(str(lb['model'])).name}　库文件：{lb['db']}"]
-            for p in lb["persons"]:
-                lines.append(f"　• {p['person_id']}　{p['name']}　role={p['role']}　"
-                             f"样本 {p['n_samples']}　注册于 {p.get('enrolled_at') or '—'}")
-            if not lb.get("has_teacher"):
-                lines.append("⚠ 库中没有任何 role=teacher 的样本 → 本地认不出教师，"
-                             "只能回退云端声纹")
-            self.local.setText("\n".join(lines))
-        else:
-            self.local.setText("本地库读取失败（检查 models/ 与 voiceprint_local_db.json）")
-
-        cb = self.win.cloud_vp
-        if cb:
-            miss = [p for p in cb["persons"] if not p.get("in_local")]
-            lines = [f"注册人数：{cb['count']}　"
-                     f"（✓ = 本地库也有，可直接离线识别）"]
-            lines += [f"　{'✓' if p.get('in_local') else '✗'} "
-                      f"{p.get('person_id', '?')}　{p.get('person_name', '?')}　"
-                      f"role={p.get('role', '?')}"
-                      + ("" if p.get("in_local") else "　→ 本地库缺此人")
-                      for p in cb["persons"]]
-            if miss:
-                lines.append(
-                    f"⚠ 有 {len(miss)} 人只在云端库：这些人的课本地认不出，"
-                    "会退化为「无教师」→ 仅存档。\n"
-                    "　补法：点下面「打开声纹注册工具」→ 选中该人 → "
-                    "点「⬇ 补录到本地库」（优先挑课堂片段，别用近场留存样本）。")
-            self.cloud.setText("\n".join(lines))
-        else:
-            self.cloud.setText("读取 voiceprint_registry.json 失败")
+        """低频自动刷新状态（60 秒一次；登录轮询期间不并发查询）。"""
+        self._tick += 1
+        if self._tick >= 60:
+            self._tick = 0
+            if self._poll_worker is None or not self._poll_worker.isRunning():
+                self.refresh_status()
 
 
 # ---------------------------------------------------------------- 页：云端
@@ -1473,8 +1649,8 @@ class Console(QMainWindow):
         self.out_dir = Path(self.cfg.get("out_dir", r"C:/recordings"))
         self.report_prefix = ((_load_json(CLOUD_DIR / "cloud_config.json") or {})
                               .get("report", {}).get("result_prefix", "jiaopei/reports/"))
-        self.local_vp = self._read_local_vp()
-        self.cloud_vp = self._read_cloud_vp()
+        # 选定的授课教师：内存值（含未落盘的选择）+ config.json 里的已保存值
+        self.selected_teacher = (self.cfg.get("selected_teacher") or "").strip()
 
         # ---- 顶部：服务灯 + 时钟 ----
         root = QWidget(); self.setCentralWidget(root)
@@ -1501,10 +1677,10 @@ class Console(QMainWindow):
         self.pages = {
             "总览": OverviewPage(self),
             "录课": RecordPage(self),
-            "声纹": VoiceprintPage(self),
             "麦克风": AudioPage(self),
             "提示词": PromptPage(self),
             "云端": CloudPage(self),
+            "飞书": FeishuPage(self),
         }
         for name, page in self.pages.items():
             self.tabs.addTab(page, name)
@@ -1521,54 +1697,55 @@ class Console(QMainWindow):
         QTimer.singleShot(800, self.check_uploaded)
 
     # ---------------- 数据读取 ----------------
-    def _read_local_vp(self) -> dict | None:
-        try:
-            cfg = self.cfg.get("identity") or {}
-            db = _load_json(Path(cfg.get("db", CLOUD_DIR / "voiceprint_local_db.json"))) or {}
-            persons = db.get("persons") or {}
-            rows = []
-            for pid, p in persons.items():
-                n = p.get("n_samples") or len(p.get("embeddings") or [])
-                # db 里人名键是 person_name（不是 name），注册时间在 enrolled_at
-                rows.append({"person_id": pid,
-                             "name": p.get("person_name") or p.get("name") or "?",
-                             "role": p.get("role", "?"), "n_samples": n,
-                             "enrolled_at": (p.get("enrolled_at") or "")[:10]})
-            missing = [r for r in rows if r["role"] != "teacher"]
-            return {"model": cfg.get("model", "?"), "db": str(cfg.get("db", "?")),
-                    "persons": rows,
-                    "enrolled_roles": {r["role"] for r in rows},
-                    "has_teacher": any(r["role"] == "teacher" for r in rows),
-                    "missing_students": len(missing)}
-        except Exception:  # noqa: BLE001
-            return None
+    def teacher_choices(self) -> list[str]:
+        """教师候选：cloud_config 的 feishu.teacher_names + 今日课表出现的教师。"""
+        names: list[str] = []
+        cfg_feishu = (_load_json(CLOUD_DIR / "cloud_config.json") or {}).get("feishu") or {}
+        raw = cfg_feishu.get("teacher_names")
+        if isinstance(raw, (list, tuple)):
+            names += [str(x).strip() for x in raw if str(x).strip()]
+        elif isinstance(raw, str) and raw.strip():
+            names.append(raw.strip())
+        single = (cfg_feishu.get("teacher_name") or "").strip()
+        if single:
+            names.append(single)
+        for it in (_load_json(RECORDER_DIR / "lessons.json") or []):
+            t = (it.get("teacher") or "").strip()
+            if t and t != "未知":
+                names.append(t)
+        seen: set[str] = set()
+        out: list[str] = []
+        for n in names:
+            if n not in seen:
+                seen.add(n)
+                out.append(n)
+        return out
 
-    def _read_cloud_vp(self) -> dict | None:
-        """读腾讯云声纹注册表。
-
-        实际结构是「voiceprint_id → {person_id, person_name, role}」的字典
-        （不是 persons/speakers 数组），这里两种都认。
-        """
-        reg = _load_json(CLOUD_DIR / "voiceprint_registry.json")
-        if not reg:
-            return None
+    def set_selected_teacher(self, name: str) -> None:
+        """应用授课教师：下发录课服务（热生效）+ 写回 config.json（重启生效）。"""
+        name = (name or "").strip()
+        self.selected_teacher = name
+        self.cfg["selected_teacher"] = name
+        ok = True
         try:
-            if isinstance(reg, list):
-                persons = list(reg)
-            elif isinstance(reg.get("persons"), (list, dict)):
-                p = reg["persons"]
-                persons = ([{"person_id": k, **(v or {})} for k, v in p.items()]
-                           if isinstance(p, dict) else list(p))
-            else:
-                persons = [{"voiceprint_id": k, **(v or {})}
-                           for k, v in reg.items() if isinstance(v, dict)]
-            persons = [p for p in persons if p.get("person_name") or p.get("person_id")]
-            local_ids = {r["person_id"] for r in (self.local_vp or {}).get("persons", [])}
-            for p in persons:
-                p["in_local"] = p.get("person_id") in local_ids
-            return {"count": len(persons), "persons": persons}
-        except Exception:  # noqa: BLE001
-            return None
+            path = RECORDER_DIR / "config.json"
+            data = json.loads(path.read_text(encoding="utf-8"))
+            data["selected_teacher"] = name
+            tmp = path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2),
+                           encoding="utf-8")
+            tmp.replace(path)
+        except Exception as exc:  # noqa: BLE001
+            ok = False
+            QMessageBox.warning(self, "写入失败",
+                                f"selected_teacher 写回 config.json 失败：\n{exc}")
+        sent = self.send_control({"action": "set_teacher", "teacher": name})
+        if ok and sent:
+            QMessageBox.information(
+                self, "已应用",
+                f"授课教师已设为「{name}」。\n"
+                "· 录课服务已热生效（VAD / 手动录制按此上报）\n"
+                "· 重启录课服务后仍生效（已写入 config.json）")
 
     def local_groups(self) -> dict:
         """按课程 tag 分组本地 wav 分段（排除仍在录制中的那一组）。"""
@@ -1785,6 +1962,9 @@ class Console(QMainWindow):
 
     def manual_start(self) -> None:
         dlg = ManualStartDialog(self)
+        # 教师预填「录课」页下拉栏选定的授课教师（一致归属，少敲一次）
+        if self.selected_teacher:
+            dlg.ed_teacher.setText(self.selected_teacher)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         course, teacher = dlg.values()
@@ -1800,28 +1980,6 @@ class Console(QMainWindow):
                 != QMessageBox.StandardButton.Yes:
             return
         self.send_control({"action": "stop"})
-
-    def open_identity_dir(self) -> None:
-        subprocess.Popen(["explorer", str(STATUS_DIR)])
-        QMessageBox.information(
-            self, "诊断文件",
-            f"已在资源管理器中打开 {STATUS_DIR}\n"
-            "identity_<tag>.json = 每次探测的结论（含作废原因）")
-
-    def open_enroll_tool(self) -> None:
-        """打开声纹注册工具（独立窗口）。
-
-        注册流程（录音 → 试听 → 提交）要独占麦克风并需人工确认，
-        不适合塞进控制台主窗口；这里只做统一入口，免得去翻目录找脚本。
-        """
-        script = ROOT / "voiceprint_enroll_gui.py"
-        if not script.exists():
-            QMessageBox.warning(self, "找不到工具", f"未找到\n{script}")
-            return
-        try:
-            subprocess.Popen([str(_PYTHONW), str(script)], cwd=str(ROOT))
-        except Exception as exc:  # noqa: BLE001
-            QMessageBox.warning(self, "启动失败", str(exc))
 
     # ---------------- 上传补传 ----------------
     def retry_upload(self) -> None:

@@ -120,18 +120,14 @@ class Uploader:
             raise
 
         sr = int(self.cfg.get("sample_rate", 16000))
-        # 录音启动后由本地声纹识别出的教师与课表反查结果（可能为 None）。
-        # 不改 course_id/tag（ffmpeg 输出名已固定），只作为**教师提示**随 meta
-        # 上报：云端 _enrich_meta 可优先采信，避免"识别不出教师 → 仅存档"。
-        identity = getattr(lesson, "identity", None)
-        # 识别出教师姓名时优先用它：VAD 课的 lesson.teacher 是"未知"，
-        # 带上真实教师可让云端 _enrich_meta 拿到准确的 teacher_hint 兜底。
-        idt_teacher = ((identity or {}).get("teacher") or {}).get("person_name")
+        # 教师归属直接取 lesson.teacher：课表触发 = 课表里的真实教师；
+        # VAD / 手动触发 = 控制台「录课」页下拉栏选定的授课教师。
+        # 云端不再做声纹识别，meta.teacher 就是课表匹配的唯一依据。
         meta = {
             "org_id": self.cfg.get("org_id"),
             "room_id": lesson.room,
             "course_id": lesson.course_id,
-            "teacher": idt_teacher or lesson.teacher,
+            "teacher": lesson.teacher,
             "start": lesson.start.isoformat(),
             "end": lesson.end.isoformat(),
             "duration_sec": int((lesson.end - lesson.start).total_seconds()),
@@ -143,7 +139,6 @@ class Uploader:
                 for k, s in zip(keys, segments)
             ],
             "uploaded_at": datetime.now().isoformat(),
-            "identity": identity,
         }
         meta_key = self._object_key(lesson.room, tag, "meta.json")
         try:

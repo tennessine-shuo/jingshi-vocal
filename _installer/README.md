@@ -5,14 +5,32 @@
 ## 产物
 
 ```
-build\out\课堂录制自动教评系统_v1.2_Setup.exe   ← 当前标准安装器
+build\out\课堂录制自动教评系统_v1.3_Setup.exe   ← 当前标准安装器
 ```
 
 **Inno Setup 标准安装器**：双击后是完整的安装向导（中文界面、进度条、
 完成页复选项），装到固定目录 `C:\recorder`，自动创建开始菜单 / 桌面快捷方式，
 并在系统「设置 → 应用」与控制面板里注册卸载入口（`unins000.exe`）。
-全部环境（Python 运行时 / ffmpeg / Node / lark-cli / 声纹模型 / VC 运行库）
+全部环境（Python 运行时 / ffmpeg / Node / lark-cli / VC 运行库）
 打进单一安装文件，目标机**无需任何前置安装**。
+
+**v1.3 变更**（2026-10-13，功能链路改造）：
+1. **课表归属改手动选择**：不再依赖声纹识别教师。控制台「录课」页新增
+   「授课教师」下拉栏（候选 = cloud_config 教师名单 + 今日课表教师，
+   可手输），选择即写 `recorder/config.json` 的 `selected_teacher`
+   并热下发录课服务；VAD / 手动触发的录制按所选教师上报 meta。
+2. **云端取消声纹环节**：pipeline 不再调用 `voiceprint_match`
+   （省掉 VoicePrintGroupVerify 调用费），说话人角色改启发式判定
+   （发言总时长最长者 = meta.teacher，其余 = 学生）；`_enrich_meta`
+   直接采信 `meta.teacher` 作 teacher_hint。
+3. **控制台新增「飞书」页**（取代「声纹」页）：显示 OAuth 授权状态，
+   一键登录（Device Flow：自动拿验证 URL → 打开浏览器 → 后台轮询
+   `--device-code`）/ 登出。课表同步登录态不再依赖 `_setup` 脚本。
+4. recorder 移除录音中本地声纹识别机制（原唯一用途就是课表匹配）；
+   `tools/test_identity_guard.py`、`test_identify_chain.py` 随之退役。
+5. 安装前/卸载前的进程检测改用 `SuppressibleMsgBox`：原先用普通 `MsgBox`，
+   `/VERYSILENT` 静默安装时只要系统里有**任意** python 进程（哪怕与本系统
+   无关），都会卡在无人点击的对话框上（v1.3 首次试装实测踩中）。
 
 **v1.2 变更**（v1.1 试装时把开发机真机覆盖出来的三处修复）：
 1. 配置文件改走 `onlyifdoesntexist` —— 首次安装落占位符版，重装/升级时

@@ -1,13 +1,17 @@
 # -*- coding: utf-8 -*-
-"""云端处理流水线编排（方案B · 云端 · 正式版 v2）。
+"""云端处理流水线编排（方案B · 云端 · 正式版 v3）。
 
-顺序：读取元数据 → 转码+VAD → ASR(含说话人分离) → 声纹1:N → 语义清洗
-     → 飞书课表匹配（学生/课程/地点/年级 enrichment）
+顺序：读取元数据 → 转码+VAD → ASR(含说话人分离) → 角色判定（启发式）
+     → 语义清洗 → 飞书课表匹配（学生/课程/地点/年级 enrichment）
      → 特征统计 → 专注力引擎（规则计算，不用大模型）
      → 大模型教评（teaching-eval 内容结构：上课内容+知识小结+PDF数据）
      → 本地产出（教评 txt/pdf + 专注力 html/xlsx + focus_data.json）
      → 回传 COS + 推送。
 每步最多重试 2 次（指数退避）；课表匹配 / PDF 渲染失败只降级不中断。
+
+v3（2026-10-13）：**取消声纹比对环节**。教师归属改为采信 meta.teacher
+（录制端由控制台下拉栏手动选定，或课表触发的真实教师），说话人角色由
+启发式判定（发言总时长最长者 = 教师）。
 """
 from __future__ import annotations
 
@@ -28,7 +32,7 @@ from report import (build_pdf_data, eval_txt_filename, generate_report,
                     push_report, render_pdf, write_eval_txt)
 from schedule_feishu import match_lesson
 from stages import (asr_transcribe, clean_segments, compute_stats, diarize,
-                    transcode_and_vad, voiceprint_match)
+                    heuristic_roles, transcode_and_vad)
 
 log = logging.getLogger("pipeline")
 
@@ -94,25 +98,13 @@ class Pipeline:
 
     # ---------------- 课表匹配（enrichment） ----------------
 
-    def _teacher_from_speakers(self, speakers: list[dict]) -> str:
-        """从声纹比对结果里找出授课教师（role=teacher 的说话人姓名）。
-
-        优先取置信度最高的 teacher；无则返回空串。
-        对应「强制声纹教师」：只有真正识别出教师才去课表里找这节课/会议。
-        """
-        teachers = [s for s in (speakers or [])
-                    if (s.get("role") or "") == "teacher"
-                    and (s.get("person_name") or "").strip()]
-        if not teachers:
-            return ""
-        teachers.sort(key=lambda s: s.get("confidence", 0), reverse=True)
-        return teachers[0]["person_name"].strip()
-
-    def _enrich_meta(self, meta: dict, speakers: list[dict] | None = None) -> dict:
+    def _enrich_meta(self, meta: dict) -> dict:
         """用飞书总日程表补全课程信息；无法匹配（无教师/无日程）则标记原因。
 
-        声纹识别出的教师名(role=teacher)作为 teacher_hint 传给课表匹配，
-        命中即区分「上课 / 会议」；均未命中则由调用方走「仅存档」。
+        教师取 meta.teacher（录制端手动选定或课表自带），作为 teacher_hint
+        传给课表匹配；命中即区分「上课 / 会议」；均未命中则由调用方走
+        「仅存档」。云端不做声纹识别 —— meta.teacher 缺失或为「未知」时
+        直接走仅存档，不再猜测。
         """
         meta["schedule_matched"] = False
         meta["schedule_reason"] = "unknown"
@@ -124,8 +116,14 @@ class Pipeline:
             meta["schedule_reason"] = "bad_time"
             meta.setdefault("course_label", meta.get("course_id", "未知课程"))
             return meta
-        teacher_hint = self._teacher_from_speakers(speakers)
-        meta["teacher"] = teacher_hint or meta.get("teacher", "")
+        teacher_hint = (meta.get("teacher") or "").strip()
+        if teacher_hint in ("", "未知"):
+            teacher_hint = ""
+            meta["schedule_reason"] = "no_teacher"
+            meta.setdefault("course_label", meta.get("course_id", "未知课程"))
+            log.info("meta 无有效教师（%r），跳过课表匹配 → 仅存档",
+                     meta.get("teacher"))
+            return meta
         hit = match_lesson(start, end, ctx={"config": self.config},
                            teacher_hint=teacher_hint)
         if hit.get("matched"):
@@ -160,7 +158,7 @@ class Pipeline:
 
     def _archive_transcript(self, task: Task, speakers: list[dict],
                             date_str: str) -> dict:
-        """仅存档：声纹与课表都无法确定这节课/会议时，只保留结构化转写与统计。"""
+        """仅存档：meta 无有效教师或课表无匹配日程时，只保留结构化转写与统计。"""
         out = self._local_outdir(task.meta)
         label = self._safe_label(task.meta)
         tjson = out / f"archived_{date_str}_{label}_transcript.json"
@@ -290,20 +288,20 @@ class Pipeline:
 
             vad = _retry("转码+VAD", transcode_and_vad, task.meta, ctx)
             speakers = _retry("说话人分离", diarize, task.meta, ctx)
-            speakers = _retry("声纹比对", voiceprint_match, speakers, task.meta, ctx)
+            speakers = _retry("角色判定", heuristic_roles, speakers, task.meta, ctx)
             raw = _retry("ASR转写", asr_transcribe, vad, task.meta, ctx)
             task.segments = _retry("语义清洗", clean_segments, raw, speakers)
 
-            # 课表 enrichment：传入声纹识别的教师，判定上课/会议（软失败）
+            # 课表 enrichment：按 meta 里的教师归属课程，判定上课/会议（软失败）
             task.meta = _soft("飞书课表匹配", self._enrich_meta,
-                              task.meta, speakers) or task.meta
+                              task.meta) or task.meta
             task.stats = _retry("特征统计", compute_stats,
                                 task.segments, task.meta, ctx)
             date_str = (task.meta.get("start") or "")[:10].replace("-", "")
 
             # ---- 分流：仅存档 / 会议 / 上课 ----
             if not task.meta.get("schedule_matched"):
-                # 声纹未识别教师，或该教师当日无匹配日程 → 仅存档（不生成任何报告）
+                # 无有效教师，或该教师当日无匹配日程 → 仅存档（不生成任何报告）
                 result = self._archive_transcript(task, speakers, date_str)
             elif task.meta.get("is_meeting"):
                 # 匹配到会议日程 → 会议纪要 + 思维导图

@@ -16,7 +16,7 @@
 ; =====================================================================
 
 #define MyAppName "课堂录制自动教评系统"
-#define MyAppVersion "1.2.0"
+#define MyAppVersion "1.3.0"
 
 [Setup]
 ; 固定 AppId：换版本升级时能识别同一安装
@@ -46,7 +46,7 @@ RestartApplications=no
 Compression=lzma2/max
 SolidCompression=yes
 OutputDir=build\out
-OutputBaseFilename=课堂录制自动教评系统_v1.2_Setup
+OutputBaseFilename=课堂录制自动教评系统_v1.3_Setup
 ArchitecturesInstallIn64BitMode=x64compatible
 
 [Languages]
@@ -114,17 +114,20 @@ begin
 end;
 
 // ---------- 安装前：检测系统是否在运行 ----------
+// 用 SuppressibleMsgBox：/VERYSILENT 静默安装（升级脚本场景）自动跳过，
+// 交互安装照常提醒。此前用普通 MsgBox，静默安装遇到任一 python 进程
+// （含与本系统无关的）会卡在无人点击的对话框上。
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   Result := '';
   if IsProcessRunning('pythonw.exe') or IsProcessRunning('python.exe') then
   begin
-    if MsgBox(
+    if SuppressibleMsgBox(
         '检测到可能有正在运行的程序（pythonw / python 进程）。' #13#10 +
         '若本系统正在录制或控制台正在运行，继续安装会因文件被占用而失败。' #13#10 #13#10 +
         '建议：先在控制台停止所有服务，再重新运行安装。' #13#10 #13#10 +
         '确认已停止、仍要继续安装吗？',
-        mbConfirmation, MB_YESNO) = IDNO then
+        mbConfirmation, MB_YESNO, IDYES) = IDNO then
       Result := '已取消安装：请先停止正在运行的服务。';
   end;
 end;
@@ -140,11 +143,11 @@ begin
   if CurUninstallStep = usUninstall then
   begin
     if IsProcessRunning('pythonw.exe') or IsProcessRunning('ffmpeg.exe') then
-      MsgBox(
+      SuppressibleMsgBox(
         '检测到可能仍在运行的服务（pythonw / ffmpeg 进程）。' #13#10 +
         '卸载可能删不干净，建议先停止服务再重试。' #13#10 +
         '录制数据目录 C:\recordings 与报告目录不会被删除。',
-        mbInformation, MB_OK);
+        mbInformation, MB_OK, IDOK);
   end;
   // 清理旧版（安装.bat 方案）留下的卸载注册项，避免出现两个卸载入口
   if CurUninstallStep = usPostUninstall then
