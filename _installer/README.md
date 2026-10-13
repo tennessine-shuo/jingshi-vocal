@@ -5,14 +5,20 @@
 ## 产物
 
 ```
-build\out\课堂录制自动教评系统_v1.0_安装包.exe
+build\out\课堂录制自动教评系统_v1.2_Setup.exe   ← 当前标准安装器
 ```
 
-单文件自解压安装包。目标机双击 → 解压出一个 `课堂录制自动教评系统_安装包\`
-文件夹 → 运行里面的 `安装.bat` → 系统被装到 `C:\recorder`。
+**Inno Setup 标准安装器**：双击后是完整的安装向导（中文界面、进度条、
+完成页复选项），装到固定目录 `C:\recorder`，自动创建开始菜单 / 桌面快捷方式，
+并在系统「设置 → 应用」与控制面板里注册卸载入口（`unins000.exe`）。
+全部环境（Python 运行时 / ffmpeg / Node / lark-cli / 声纹模型 / VC 运行库）
+打进单一安装文件，目标机**无需任何前置安装**。
 
-外层刻意套了一层同名文件夹，避免解压后把 `安装.bat` / `7za.exe` / 144MB 的
-`payload.7z` 直接摊在用户选的目录里（比如桌面）。
+**v1.2 变更**（v1.1 试装时把开发机真机覆盖出来的三处修复）：
+1. 配置文件改走 `onlyifdoesntexist` —— 首次安装落占位符版，重装/升级时
+   **绝不覆盖用户已填的真实密钥**；
+2. 补 `DefaultGroupName` —— v1.1 缺它导致开始菜单快捷方式落进 `(Default)` 组；
+3. stage 移除 SFX 时代的 `安装.bat` / `卸载.bat`，与 Inno 流程不再重复。
 
 ## 三步构建
 
@@ -21,11 +27,19 @@ cd C:\recorder\_installer
 C:\recorder\venv\Scripts\python.exe make_runtime.py     :: 1) 精简独立运行时
 C:\recorder\venv\Scripts\python.exe make_bats.py        :: 2) 生成安装脚本
 C:\recorder\venv\Scripts\python.exe make_payload.py     :: 3) 组装载荷
-C:\recorder\venv\Scripts\python.exe make_sfx.py         :: 4) 打自解压包
+tools\InnoSetup\ISCC.exe installer.iss                  :: 4) 编译标准安装器
 ```
 
-`make_sfx.py` 默认复用 `files\sfx\payload.7z`（省掉约 3.4 分钟的重压）。
-**stage 内容有改动时要加 `--rebuild`**，否则打进去的仍是旧载荷。
+旧版 SFX 流程（`make_sfx.py`）保留但已弃用。
+
+**载荷代码刷新**：stage 是打包时刻的快照。源码改动后需同步刷新，再编译：
+
+```bash
+robocopy cloud  _installer\build\stage\cloud  /E /XF cloud_config.json cloud_config.example.json voiceprint_local_db.json /XD prompts_backup voiceprint_local_backup __pycache__ asr_cache
+robocopy recorder _installer\build\stage\recorder /E /XF config.json /XD __pycache__
+robocopy tools  _installer\build\stage\tools  /E /XF courses.local.json /XD __pycache__
+# 根级单文件：console.py / monitor_gui.py / voiceprint_enroll_gui.py / mic_devices.py
+```
 
 顺序不能颠倒：`make_bats` 的产物在 `make_payload` 里被复制进载荷，
 `make_payload` 依赖 `make_runtime` 产出的 `stage\venv`。
@@ -37,7 +51,13 @@ C:\recorder\venv\Scripts\python.exe make_sfx.py         :: 4) 打自解压包
 | `make_runtime.py` | `build\stage\venv\` | 精简独立 Python 运行时（310MB，原 1049MB） |
 | `make_bats.py` | `files\setup\*`、`stage\*.bat` | 全部 .bat（CRLF + 纯 ASCII）与使用说明 |
 | `make_payload.py` | `build\stage\` 其余部分 | 代码 / ffmpeg / Node / lark-cli / 模型 / 脱敏配置 |
-| `make_sfx.py` | `build\out\*.exe` | 内层 payload.7z + 外层 SFX 拼接 |
+| `installer.iss` | `build\out\*_Setup.exe` | **Inno Setup 编译脚本**（v1.1 标准安装器） |
+| `make_sfx.py` | `build\out\*_安装包.exe` | 旧版 7z SFX 自解压（弃用，保留回退） |
+
+编译器本体在 `tools\InnoSetup\`（官方 6.7.1，静默装进项目目录，
+`Languages\ChineseSimplified.isl` 取自 issrc is-6_5_1 tag——官方已撤下
+简中翻译，该版本含 6.7 新增消息时会回落英文 Default.isl，仅影响
+下载/校验等本安装器用不到的提示语）。
 
 ## 关键设计决定（改动前务必先读）
 
@@ -91,28 +111,49 @@ status 文件、reports 目录、cloud_work 工作区……）。改目录必崩
 清理旧产物用 `cmd /c rd /s /q`（比 robocopy `/MIR` 快一个数量级：
 5 万个小文件从 7 分钟降到十几秒）。
 
-### 7. 为什么用 7z SFX 而不是 Inno Setup / iexpress
+### 7. 为什么 v1.1 从 7z SFX 升级到 Inno Setup
 
-- 本机已有**签名版** 7-Zip，`7z.sfx` 是官方自解压模块，不引入第三方；
-- Inno Setup / NSIS 需联网下载安装，且本机有 Smart App Control 拦截
-  未签名程序的历史；
-- `iexpress`（Windows 内置）是 GUI 程序，`/N /Q` 脚本化调用会挂住（实测退出码 1）。
+v1.0 的 7z SFX 本质是「自解压 + 手动运行 安装.bat」两步，用户反馈这
+"只是压缩包，不是安装包"。v1.1 改用 **Inno Setup 6.7.1**（官方签名版，
+静默装进 `tools\InnoSetup`，不污染系统）：
 
-`7z.sfx` 24.09 不含安装配置支持（`RunProgram`/`Title` 等字符串在二进制里
-均不存在，ASCII 与 UTF-16 都查过），所以是「自解压 + 手动运行 安装.bat」
-两步，而不是全自动一步。
+- 真正的安装向导：欢迎页 → 进度条 → 完成页（可选立即填密钥 / 飞书登录 / 启动控制台）；
+- 原生卸载器：`{app}\unins000.exe` + 系统「应用」列表里的卸载入口（HKCU）；
+- 快捷方式、开机自启（可选任务）全部由安装器管理，不再依赖 `setup.py`；
+- 安装前自动检测 pythonw/python 进程在跑会提醒先停服务（文件占用会导致装一半失败）；
+- 卸载时顺带清掉旧版（安装.bat 方案）留在注册表 `ClassroomRecorder` 的卸载项。
 
-## 构建后验证（均已实测）
+**踩坑**：`[Code]` 段里行首的 `#13#10` 会被 ISPP 预处理器当成指令报
+"Unknown preprocessor directive"——`#` 开头的续行必须避免，把 `#13#10`
+放在行尾即可。另外 `ISCC /O-` 是"禁用输出"（校验脚本用），正式编译不带它。
+
+**旧方案为何落选**：`iexpress`（Windows 内置）GUI 程序无法脚本化（实测挂死）；
+`7z.sfx` 24.09 不支持 `RunProgram` 安装配置（二进制 ASCII/UTF-16 双查无此字符串）；
+新版 7-Zip Extra 已移除安装器 SFX 模块。
+
+## 构建后验证（v1.2 实测记录）
 
 | # | 验证项 | 方法 | 结果 |
 |---|---|---|---|
-| 1 | 归档完整性 | `7za t payload.7z` | Everything is Ok（4452 文件 / 594.5 MB） |
-| 2 | 归档根结构 | `7za l payload.7z` | 根级直接是 `venv\` `ffmpeg\` `cloud\`…，无多余 `stage\` 层 |
-| 3 | SFX 自解压 | `安装包.exe -y -o<dir>` | 退出码 0，解出「课堂录制自动教评系统_安装包」文件夹 |
-| 4 | 运行时独立性 | 在 `C:\Users\Public\...` 隔离路径实跑 | `sys.prefix` 正确指向隔离 venv 根 |
-| 5 | 第三方依赖 | 逐个 `import` | 14/14 通过（`scipy` 项目未使用） |
-| 6 | 端到端自检 | SFX → 解压 → `setup.py check` | 7 项必需组件全绿 |
-| 7 | 捆绑程序 | `lark-cli --version` / `ffmpeg -version` | 1.0.96 / 9.0.1 |
+| 1 | 静默安装到隔离目录 | PowerShell `Start-Process -Wait` + `/VERYSILENT /DIR=…` | 退出码 0，装到指定目录 |
+| 2 | 不误装真机 | 安装后查 `C:\recorder\unins000.exe` | 未出现 ✓ |
+| 3 | 注册表指向 | 读 HKCU 卸载项 `InstallLocation` | 指向隔离目录 ✓ |
+| 4 | 开始菜单组名 | 列 `%APPDATA%\...\Programs\课堂录制自动教评系统` | 6 个快捷方式齐全 ✓ |
+| 5 | 安装出的 Python | `sys.prefix` + `import PySide6, numpy, qcloud_cos` | 指向隔离 venv，导入 OK |
+| 6 | **重装保留密钥** | 填模拟密钥 → 二次安装 → 复查 | `onlyifdoesntexist` 生效，密钥未覆盖 ✓ |
+| 7 | 静默卸载 | `unins000.exe /VERYSILENT` | 目录/注册表/开始菜单全清，不波及他处 ✓ |
+
+### 排错记录 2：静默安装参数被 Git Bash 吃掉（本次事故根因）
+
+在 Git Bash 里跑 `Setup.exe //VERYSILENT //DIR=…`：禁用路径转换（`MSYS2_ARG_CONV_EXCL`）
+后 `//VERYSILENT` 是**字面量**，Inno 不认（它要单斜杠 `/VERYSILENT`）→ 参数全被忽略，
+安装器以**向导模式**弹在屏幕上，最终被点完成、装进默认目录 `C:\recorder`，
+把开发机的真实密钥配置覆盖成了占位符版（已从 10/10 卷影副本恢复）。
+
+教训：**测 Inno 静默参数一律走 PowerShell `Start-Process -ArgumentList`**，
+参数用数组、单斜杠，绝不经过 bash 转换层。另注意：注册表里已有同 AppId 的
+安装记录时，`/DIR` 会被忽略（Inno 认为是升级、沿用原目录）——重测前先删
+`HKCU\...\Uninstall\{AppId}}_is1`。
 
 ### 排错记录：`python313.dll` 必须与 `python.exe` 同目录
 
@@ -131,10 +172,16 @@ venv\Scripts\python.exe _setup\setup.py check
 
 ## 已知限制
 
-1. **不是单击安装**：解压后需再运行一次 `安装.bat`。
-2. **飞书需一次授权**：`_setup\lark_login.bat`，OAuth 登录态
-   （`%USERPROFILE%\.lark-cli`）无法跨机复制。
-3. **声纹需重新注册**：安装包不含声纹库。
-4. **`lark-cli.exe` 是未签名原生程序**：若目标机开着 Smart App Control，
+1. **安装目录固定 `C:\recorder`**：源码 60+ 处硬编码，向导不给选目录（这是特性不是缺陷）。
+2. **飞书需一次授权**：完成页勾选「立即登录飞书」或运行 `飞书登录.bat`，
+   OAuth 登录态（`%USERPROFILE%\.lark-cli`）无法跨机复制。
+3. **声纹需重新注册**：安装包不含声纹库（生物特征数据）。
+4. **云密钥是占位符**：完成页勾选「立即填写云服务密钥」或运行 `首次配置.bat`。
+   `cloud_config.json` 的飞书 base/table 标识保留在实例配置里（课表同步必需），
+   源码中不出现。
+5. **`lark-cli.exe` 是未签名原生程序**：若目标机开着 Smart App Control，
    可能被拦截。参考 `~/.workbuddy/MEMORY.md` 里的处置办法。
-5. **构建耗时**：`make_runtime` 约 10 分钟，`make_sfx` 压缩约 10 分钟。
+6. **构建耗时**：`make_runtime` 约 10 分钟；ISCC 编译（LZMA2/max 压 577MB）
+   约 10–25 分钟。
+7. **静默部署**：支持 `/VERYSILENT /SUPPRESSMSGBOXES /TASKS="" /DIR=…`
+   （`/DIR` 可覆盖固定目录，仅测试用；正式装别改）。

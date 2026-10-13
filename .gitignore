@@ -46,6 +46,8 @@ TEST-001_report.txt
 # ---------- 4. 体积：运行时 / 构建产物 / 大二进制 ----------
 venv/
 _installer/build/
+_installer/tools/
+_installer/downloads/
 _installer/files/sfx/payload.7z
 _installer/files/sfx/_pkg/
 models/
